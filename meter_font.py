@@ -1,7 +1,7 @@
 import bpy
 import blf
 from math import *
-from .light_meter import confirmPanel, getMeasureButtonPos, calcMeasuredFromEV, \
+from .light_meter import confirmPanel, getDisplayPos, calcMeasuredFromEV, \
     LIGHTMETER_PT_main_panel as LIGHTMETER_PT, LightMeterProperties
     
 
@@ -31,7 +31,7 @@ def drawText(panel):
     meter: LightMeterProperties = context.scene.light_meter
     uiscale = context.preferences.view.ui_scale
     icon_top = int(ICON_LOC*uiscale)
-    _, y = getMeasureButtonPos(region, 1)
+    _, y = getDisplayPos(region, 1)
 
     label, value_str = calcMeasuredFromEV(meter)
     E = meter.ev_value
@@ -44,7 +44,7 @@ def drawText(panel):
 
     size = TEXT_SIZE*uiscale
     pad = size/2
-    w = region.width
+    w = region.width*0.95
     count = 0
     while 1.5*w > (region.width - pad - BORDER*uiscale):
         blf.size(FONT_ID, size)
@@ -56,7 +56,7 @@ def drawText(panel):
             break
     # display_height = BASE_ELEM*panel_state.display_scale*uiscale
 
-    x = (region.width - pad - w)/2
+    x = (0.89*region.width - pad - w)/2
     y -= h/2
 
     blf.size(FONT_ID, size*2/3)

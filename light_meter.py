@@ -39,7 +39,7 @@ def findBlueRun(buf_u8, w, h, run_len=3, target=(0x70, 0xB2, 0xFF)):
     return -1, -1
 
 
-def getMeasureButtonPos(region, is_handler=0):
+def getDisplayPos(region, is_handler=0):
     T = bpy.data.texts
     I = bpy.data.images
 
@@ -186,15 +186,18 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
     bl_label = 'Measure Light'
     bl_options = {'REGISTER', 'UNDO'}
 
+    panel = 0
     def invoke(self, context, event):
-        panel = LIGHTMETER_PT_main_panel
+        self.panel = LIGHTMETER_PT_main_panel
         region = 0
         for r in context.area.regions:
             if r.type == 'UI':
                 region = r
         # x, y = getMeasureButtonPos(region)
-        # storePanelClickY(panel, y, region)
-        return self.execute(context)
+        state = setPanelMeasuring(self.panel)
+        bpy.app.timers.register(lambda: self.execute(context), first_interval=0.1)
+        # res = self.execute(context)
+        return {'FINISHED'}
 
     def execute(self, context):
         scene = context.scene
@@ -256,6 +259,7 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
 
         finally:
             bpy.data.scenes.remove(temp_scene)
+            state = setPanelMeasuring(self.panel, 0)
 
         return {'FINISHED'}
 
@@ -282,54 +286,16 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
     def draw_header(self, context):
         markPanelState(type(self), 0)
         layout = self.layout
-        layout.label(text='', icon='CAMERA_DATA')
+        layout.label(text='', icon='SCENE')
+        # layout.operator('lightmeter.measure', text='Measure', icon='SCENE')
 
     def draw(self, context):
-        #  33 + 10 +  50 +  6= 99 # + 87 = 153 (29.000)
-        #  65 + 20 +  98 + 12=195 # + 171=301 (28.250-28.583)
-        # 102 + 30 + 152 + 18=302 # + 340     (28.292-28.375)
         layout = self.layout
         meter = context.scene.light_meter
         markPanelState(type(self), 1)
 
-        # === Big readout (measured value) ===
-        big = layout.box()
-        # main_col = big.column(align=True)
-        label, value_str = calcMeasuredFromEV(meter)
-        # big = main_col.row()
-        big.scale_y = 4
-        big.label(icon='NODE_SOCKET_STRING')
-        big.alignment = 'EXPAND'
-        # big.label(text=value_str if meter.ev_value > -9.9 else '---', icon='LIGHT_SUN')
-        # draw_large_text(big, value_str, scale=1.0)
-
-        # === Sekonic-mode header (inputs) ===
-        hdr = layout.column()
-
-        main_col = hdr.column()
-        sub = main_col.row(align=True)
-        sub.alignment = 'CENTER'
-        if meter.ev_value > -9.9:
-            sub.label(text=f'{label}')
-            sub.separator()
-            sub.label(text=f'EV {meter.ev_value:.1f}')
-        else:
-            sub.label(text='No reading')
-
-        # Measure Button - Professional style
-        measure_row = hdr.row()
-        measure_row.scale_y = 2
-        measure_row.operator('lightmeter.measure',
-                             text='MEASURE', icon='MAT_SPHERE_SKY',
-                             emboss=1)
-        hdr.separator()
-
-        row0 = hdr.row(align=True)
-        row0.ui_units_y = 0
-        row0.label(text='Ambient Light Mode', icon='LIGHT')
-        row0.prop(meter, 'mode', text='')
-
-        set_box = hdr.box()
+        # === Settings bar (T/F/ISO) ===
+        set_box = layout.box()
         set_row = set_box.row(align=0)
         set_row.scale_y = 1.2
 
@@ -354,56 +320,62 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             c2.prop(exps, 'iso_preset', text='')
             c2.box().label(text=f'{exps.iso_preset}')
 
-        # === Simple ruler (-3..+3 EV) with tick ===
-        r = main_col.box()
-        rrow = r.row(align=True)
-        rrow.scale_y = 0.9
-        marks = ['-3','-2','-1','0','1','2','3']
-        for m in marks:
-            rrow.label(text=m)
+        # === Big readout (measured value) ===
+        disp = layout.split(factor=0.89)
+        big = disp.box()
+        big.scale_y = 4
+        big.alignment = 'EXPAND'
+        big.label(icon='NODE_SOCKET_STRING')
 
-        mark = r.row(align=True)
-        idx = 3
-        if meter.ev_value > -9.9:
-            frac = meter.ev_value - floor(meter.ev_value)
-            shift = int(round(frac*3))
-            idx = max(0, min(6, 3 + shift))
-        for i in range(7):
-            if i == idx:
-                mark.label(text='|', icon='KEYFRAME_HLT')
-            else:
-                mark.label(text=' ')
+        # Your blf drawing code goes here
+        measure = disp.row(align=1)
+        state = getPanelState(LIGHTMETER_PT_main_panel)
+        measuring = state.measuring
 
-        # Exposure Calculator - Professional grid layout
-        if meter.ev_value > -10:
-            exp_box = layout.box()
-            exp_header = exp_box.row()
-            exp_header.label(text='Exposure Calculator', icon='CAMERA_DATA')
+        button = measure.column(align=1)
+        button.alignment = 'EXPAND'
+        button.scale_y = 4.6
+        button.operator('lightmeter.measure',
+                         text=' ', icon='THREE_DOTS', depress=measuring)
 
-            exp_col = exp_box.column(align=True)
-            ev = meter.ev_value
+        label = measure.column(align=1)
+        label.scale_y = 0.656
+        # label.alignment = 'LEFT'
+        # label.label(text='M', icon='EVENT_M')
+        for c in 'MEASURE':
+            label.operator('lightmeter.measure', text=c,
+                           emboss=1, depress=measuring)
 
-            combinations_shown = 0
-            for item in generateApertures()[:8]:
-                f_stop = float(item[0])
-                shutter = f_stop**2 / (2**ev)
-                if 1/8000 <= shutter <= 30 and combinations_shown < 6:
-                    exp_row = exp_col.row(align=True)
-                    exp_row.scale_y = 1.1
+        button = measure.column(align=1)
+        button.alignment = 'RIGHT'
+        button.scale_y = 4.6
+        button.scale_x = 0.5
+        button.operator('lightmeter.measure',
+                         text='', emboss=1, depress=measuring)
 
-                    f_col = exp_row.row()
-                    f_col.alignment = 'LEFT'
-                    f_col.label(text=f'f/{f_stop:.1f}')
+        # === Analog scale (-3 to +3 EV) ===
+        # scale_box = layout.box()
+        
+        # # Scale labels
+        # labels = scale_box.row(align=True)
+        # labels.scale_y = 0.9
+        # marks = ['-3', '-2', '-1', '0', '1', '2', '3']
+        # for m in marks:
+        #     labels.label(text=m)
 
-                    s_col = exp_row.row()
-                    s_col.alignment = 'RIGHT'
-                    if shutter < 1:
-                        shutter_str = f'1/{int(1/shutter)}'
-                    else:
-                        shutter_str = f'{shutter:.1f}s'
-                    s_col.label(text=shutter_str)
-
-                    combinations_shown += 1
+        # # Indicator position
+        # indicator = scale_box.row(align=True)
+        # idx = 3
+        # if meter.ev_value > -9.9:
+        #     frac = meter.ev_value - floor(meter.ev_value)
+        #     shift = int(round(frac * 3))
+        #     idx = max(0, min(6, 3 + shift))
+        
+        # for i in range(7):
+        #     if i == idx:
+        #         indicator.label(text='|', icon='KEYFRAME_HLT')
+        #     else:
+        #         indicator.label(text=' ')
 
         # Settings
         settings_box = layout.box()
@@ -497,22 +469,6 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         default=True
     )
 
-def collectLayoutTypes(node, found, tab=0):
-    if isinstance(node, dict):
-        type = node.get('type', 0)
-        pad = LAYOUT_PADDING_PIXELS.get(type, 0)
-        sp = '   '*tab
-        if type and pad:
-            print(f'{sp}{type=}: {pad} px')
-            found.append(pad)
-        if 'items' in node:
-            for child in node['items']:
-                collectLayoutTypes(child, found, tab+1)
-                # if isinstance(child, dict) and 'type' in child:
-                #     found.append(LAYOUT_PADDING_PIXELS[child['type']])
-    elif isinstance(node, list):
-        for child in node:
-            collectLayoutTypes(child, found, tab+1)
 
 class LIGHTMETER_OT_dump_panel_layout(bpy.types.Operator):
     bl_idname = 'lightmeter.dump_panel_layout'
@@ -540,10 +496,7 @@ class LIGHTMETER_OT_dump_panel_layout(bpy.types.Operator):
 class LightMeterPanelState(bpy.types.PropertyGroup):
     panel_category: StringProperty(default='') #type:ignore
     is_open: BoolProperty(default=False) #type:ignore
-    last_click_y: IntProperty(default=0) #type:ignore
-    # display_scale: FloatProperty(default=0.0) #type:ignore
-    # measure_scale: FloatProperty(default=0.0) #type:ignore
-    # panel_top: IntProperty(default=0) #type:ignore
+    measuring: BoolProperty(default=False) #type:ignore
 
 # ============= REGISTRATION =============
 
@@ -579,21 +532,10 @@ def markPanelState(panel, is_open, display_scale=0, measure_scale=0):
     state.display_scale = display_scale
     state.measure_scale = measure_scale
 
-# def storePanelClickY(panel, click_y, region):
-#     state = getPanelState(panel)
-#     # state.last_click_y = click_y
-#     # bscale = state.measure_scale
-#     uiscale = bpy.context.preferences.view.ui_scale
-#     icon_top = 50*uiscale
-
-#     # hR = region.height
-#     # hB = (26*bscale + 5 + 3)*uiscale
-#     # hB = (24*bscale)*uiscale
-#     # button_pad = round((33 + 5)*uiscale)
-#     # y_quant = int(int((hR - click_y - button_pad)/hB)*hB)
-#     # print(f'{hR - y_quant}; {y_quant=}; {click_y=}; {hR=}')
-#     # state.panel_top = int(click_y + icon_top)
-#     # print('button_top:', state.panel_top - button_pad)
+def setPanelMeasuring(panel, is_measuring=1):
+    state = getPanelState(panel)
+    state.measuring = is_measuring
+    return state
 
 def ensureUniquePanelIdname():
     panel = LIGHTMETER_PT_main_panel
