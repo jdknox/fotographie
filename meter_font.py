@@ -3,6 +3,7 @@ import blf
 from math import *
 from .light_meter import confirmPanel, getDisplayPos, calcMeasuredFromEV, \
     LIGHTMETER_PT_main_panel as LIGHTMETER_PT, LightMeterProperties
+# from .main import stepTenths
     
 
 # Constants
@@ -33,20 +34,23 @@ def drawText(panel):
     icon_top = int(ICON_LOC*uiscale)
     _, y = getDisplayPos(region, 1)
 
-    label, value_str = calcMeasuredFromEV(meter)
-    E = meter.ev_value
-    step = 2*log2(E)
-    E = round(E) if E >= 1000 else round(E, 1)
-    full = floor(step)
-    frac = round(step - full)
+    # ev = meter.ev_value
+    # step = 2*log2(ev)
+    # ev = round(ev) if ev >= 1000 else round(ev, 1)
+    # full = floor(step)
+    # frac = round(step - full)
+    # full /= 2
 
-    text = f'{label, value_str}'
+    full, frac = calcMeasuredFromEV(meter)
+    # full, frac = stepTenths(float(value_str))
+
+    text = f'{full}'
 
     size = TEXT_SIZE*uiscale
     pad = size/2
     w = region.width*0.95
     count = 0
-    while 1.5*w > (region.width - pad - BORDER*uiscale):
+    while 1.5*w > (region.width - 4*pad - BORDER*uiscale):
         blf.size(FONT_ID, size)
         w, h = blf.dimensions(FONT_ID, text)
         pad = size/2
@@ -57,17 +61,20 @@ def drawText(panel):
     # display_height = BASE_ELEM*panel_state.display_scale*uiscale
 
     x = (0.89*region.width - pad - w)/2
-    y -= h/2
+    y -= h/2 + 1.5*BASE_ELEM*uiscale
 
-    blf.size(FONT_ID, size*2/3)
-    blf.position(FONT_ID, x + w, y - size*1/3, 0)
-    blf.color(FONT_ID, *TEXT_COLOR)
-    blf.draw(FONT_ID, str(frac))
-
+    # main display
     blf.size(FONT_ID, size)
     blf.position(FONT_ID, x, y, 0)
     blf.color(FONT_ID, *TEXT_COLOR)
     blf.draw(FONT_ID, text)
+
+    # tenths steps
+    if meter.tenth_steps:
+        blf.size(FONT_ID, size*2/3)
+        blf.position(FONT_ID, x + w, y - size*1/3, 0)
+        blf.color(FONT_ID, *TEXT_COLOR)
+        blf.draw(FONT_ID, str(frac))
 
 class TEXT_PT_simple(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'

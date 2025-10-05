@@ -2,13 +2,37 @@ import bpy
 from bpy.props import FloatProperty, EnumProperty, BoolProperty
 from bpy.types import PropertyGroup, Panel
 from mathutils import *
-from math import log2, sqrt, pow
+from math import log2, sqrt, pow, floor, log10
 from types import SimpleNamespace as struct
 
 # Standard camera values
-F_STOPS = [0.5, 1.0, 1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0, 32.0, 64.0]
-APERTURE_VALUES = [(str(v), f'f/{v}', '') for v in F_STOPS]
-# APERTURE_VALUES = [(n, t[2:]+' |', u) for n, t, u in APERTURE_VALUES]
+MAX_STEPS = 6
+LOWEST_APERTURE_EV = -2
+HIGHEST_APERTURE_EV = 15
+APERTURE_OFFSET = MAX_STEPS*LOWEST_APERTURE_EV
+
+F_NUMBERS = [
+  '0.5','',  '0.56',  '0.6' ,  '0.63','',
+  '0.7','',  '0.8' ,  '0.85',  '0.9' ,'',
+  '1.0','',  '1.1' ,  '1.2' ,  '1.3' ,'',
+  '1.4','',  '1.6' ,  '1.7' ,  '1.8' ,'',
+  '2.0','',  '2.2' ,  '2.4' ,  '2.5' ,'',
+  '2.8','',  '3.2' ,  '3.3' ,  '3.5' ,'',
+  '4.0','',  '4.5' ,  '4.8' ,  '5.0' ,'',
+  '5.6','',  '6.3' ,  '6.7' ,  '7.1' ,'',
+  '8.0','',  '9.0' ,  '9.5' , '10'   ,'',
+ '11'  ,'', '13'   , '13.5' , '14'   ,'',
+ '16'  ,'', '18'   , '19'   , '20'   ,'',
+ '22'  ,'', '25'   , '27'   , '29'   ,'',
+ '32'  ,'', '36'   , '38'   , '40'   ,'',
+ '45'  ,'', '51'   , '54'   , '57'   ,'',
+ '64'  ,'', '72'   , '76'   , '80'   ,'',
+ '90'  ,'','101'   ,'107'   ,'114'   ,'',
+'128'  ,'','144'   ,'152'   ,'161'   ,'',
+'180']
+
+# ▸
+APERTURE_LABELS = [(v, f'· f/{v}  ', '') for v in F_NUMBERS]
 
 SHUTTER_VALUES = [
     ('4096', '1/4000', ''), ('2048', '1/2000', ''), ('1024', '1/1000', ''),
@@ -31,81 +55,80 @@ def dprint(*args, **kwargs):
 
 def generateShutterSpeeds(self=0, context=0):
     labels = [
+        '1/64000', '1/32000', '1/16000',
         '1/8000', '1/4000', '1/2000', '1/1000', '1/500', '1/250',
         '1/125', '1/60', '1/30', '1/15', '1/8', '1/4',
         '1/2', '1"', '2"', '4"', '8"', '15"', '30"'
     ]
 
     speeds = []
-    for i in range(19):
-        ms = 2**(i - 3)  # 2^-3 to 2^15 milliseconds
+    for i in range(21, 0 - 1, -1):
+        ms = 2**(i - 6)  # 2^-6 to 2^15 milliseconds
         seconds = str(ms/1000.0)
         label = labels[i]
         identifier = str(ms)  # Use ms value as identifier
         speeds.append((identifier, label, identifier + ' ms'))
-    speeds.append(('CUSTOM', 'Custom', ''))
+    # speeds.append(('CUSTOM', 'Custom', ''))
 
     return speeds
 
-def generateApertures(self=0, context=0):
-    labels = [
-        'f/0.5', 'f/0.7', 'f/1.0', 'f/1.4', 'f/2.0', 'f/2.8', 'f/4.0', 'f/5.6',
-        'f/8.0', 'f/11', 'f/16', 'f/22', 'f/32', 'f/45', 'f/64', 'f/90'
-    ]
+def floor2(v, f):
+    s = 10**f
+    return floor(v*s)/s
 
+def generateEVIndices(steps=3):
+    start, end = (-2*steps, 15*steps + (3 - steps))
+    return [a/steps for a in range(start, end, +1)]
+
+def _generateApertures(self=0, context=0):
     apertures = []
-    for i in range(-2, 14):
-        fstop = 2**(i/2)  # sqrt(2) progression from f/1.0
-        fstop_str = str(round(fstop, 2))
-        label = labels[i+2]
-        apertures.append((fstop_str, label, f'{fstop:.2f}'))
-    apertures.append(('CUSTOM', 'Custom', ''))
+    steps = 3
+    start, end = (-2*steps, 15*steps + (3 - steps))
+    for i in range(start, end, +1):
+        fstop = 2**(i/(2*steps))  # sqrt(2) progression from f/0.5
+        fstop_str = str(round(fstop, 3))
+        signif = max(min(1, 1 - floor(log10(fstop))), 0)
+        frac = fstop*pow(10, signif) % 1
+        dumb = frac < 2/3
+        if fstop < 0.6:
+            signif += 1
+        if dumb:
+            label = floor2(fstop, signif)
+        else:
+            label = round(fstop, signif)
+        label = f'{{:.{signif}f}}'.format(label)
+        apertures.append((fstop_str, label, f'{{:.{signif+1}f}}'.format(fstop)))
+    # apertures.append(('CUSTOM', 'Custom', ''))
 
     return apertures
+def generateApertures(self=0, context=0):
+    steps = 3
+    fmt = ' =EV {:+2d}= '
+    filtered = []
+    if steps == MAX_STEPS:
+        filtered = [('0', fmt.format(APERTURE_OFFSET//MAX_STEPS), '')]
+    for i, a in enumerate(APERTURE_LABELS):
+        include = (i % (MAX_STEPS//steps)) == 0
+        if a[0] and include:
+            sp = ' '*min(1, i % steps)
+            new_a = a[1][min(1, i % steps):]
+            filtered.append((a[0], sp+new_a, a[2]))
+        elif (steps == MAX_STEPS) and (i % MAX_STEPS == 5):
+            ev_a = (i + APERTURE_OFFSET)//MAX_STEPS
+            filtered.append(('0', fmt.format(ev_a + 1), ''))
+    # for c in range(256):
+    #     filtered.append((f'{c}', f'{c}:{chr(c)}', f'{c}:{chr(c)}'))
+    return filtered
 
 def generateISOSpeeds(self=0, context=0):
     std_100 = [100, 125, 160, 200, 250, 320, 400, 500, 640, 800,]
     all_thirds = []
     for b in range(-2, 4):
         for iso in std_100:
-            identifier = str(iso*pow(10, b))
-            all_thirds.append((identifier, identifier, ''))
+            ident = iso*pow(10, b)
+            display = str(ident if ident < 4 else round(ident))
+            all_thirds.append((str(ident), display, ''))
     return all_thirds
-
-def OLD_updateAperture(self, context):
-    global is_updating, window_start
-    if is_updating:
-        print('ALREADY UPDATING!')
-        return
-    else:
-        print('UPDATE')
-    camera_data = context.scene.camera.data
-    exposure_props = camera_data.exposure_settings
-
-    value = exposure_props.aperture_preset
-    label = f'f/{value}'
-    selected_value = float(value)
-    selected_index = APERTURE_VALUES.index((value, label, ''))
-    # print(f'{selected_value=} ({selected_index})')
-
-    # Get current window bounds
-    start = max(0, window_start - 1)
-    end = min(len(APERTURE_VALUES), start + 3)
-    if end - start < 3:
-        start = max(0, end - 3)
-    # print(start, end)
-
-    # Check if selected item is at window edges
-    if selected_index == start and window_start > 1:
-        # Left edge selected - shift window left
-        window_start = max(1, window_start - 1)
-    elif selected_index == end - 1 and window_start < len(APERTURE_VALUES) - 2:
-        # Right edge selected - shift window right
-        window_start = min(len(APERTURE_VALUES) - 2, window_start + 1)
-    is_updating = 1
-    exposure_props.aperture_preset = APERTURE_VALUES[window_start][0]
-    is_updating = 0
-    # print(getApertureItems(self, context))
 
 def updateAperture(self, context):
     # Update other settings
@@ -146,17 +169,14 @@ def updateExposure(self, context):
         pass
     else:
         f_stop = float(exposure_props.aperture_preset)
-    # print(f'{f_stop=}; {{drag_updating=}}')
+    print(f'{f_stop=};')
 
     if exposure_props.shutter_preset == 'CUSTOM':
-        shutter_speed = exposure_props.shutter_custom
+        shutter_in_s = exposure_props.shutter_custom
     else:
         shutter_val = exposure_props.shutter_preset
-        if shutter_val.endswith('s'):
-            shutter_speed = 1.0/float(shutter_val[:-1])
-        else:
-            shutter_speed = 1.0/float(shutter_val)
-    dprint(f'{shutter_speed=}')
+        shutter_in_s = float(shutter_val)*1e-3
+    dprint(f'{shutter_in_s=}')
 
     if exposure_props.iso_preset == 'CUSTOM':
         iso = exposure_props.iso_custom
@@ -172,15 +192,19 @@ def updateExposure(self, context):
     K_sekonic = 12.5
     use_offset = 1
     K_blender = 24.59*2 if use_offset else 1
-    exposure_settings = shutter_speed/(f_stop**2)
+    K_blender = 340
+    # dEV 3.92420
+    # 14.245183944702148
+    exposure_settings = shutter_in_s/(f_stop**2)
     exposure_settings *= iso/100
     exposure_settings *= ev_factor
-    film_exposure = K_sekonic*K_blender*exposure_settings
+    film_exposure = K_blender*exposure_settings
+    # film_exposure = exposure_settings
 
     # Update camera and render settings
     camera_data.dof.aperture_fstop = f_stop
     if context.scene.camera.data == camera_data:
-        context.scene.render.motion_blur_shutter = shutter_speed
+        context.scene.render.motion_blur_shutter = shutter_in_s
         context.scene.cycles.film_exposure = film_exposure
         print(f'{film_exposure=}')
     else:
@@ -189,13 +213,13 @@ def updateExposure(self, context):
 
 class CameraExposureSettings(PropertyGroup):
     '''Camera exposure settings property group'''
-    aperture_index: bpy.props.IntProperty(min=0, max=len(APERTURE_VALUES)-1) # type: ignore
+    aperture_index: bpy.props.IntProperty(min=0, max=len(APERTURE_LABELS)-1) # type: ignore
 
     aperture_preset: EnumProperty(
         name='Aperture',
         # items=APERTURE_VALUES,
         items=generateApertures,
-        default=5,
+        default=7,
         update=updateAperture
     ) # type: ignore
 
@@ -211,7 +235,7 @@ class CameraExposureSettings(PropertyGroup):
     shutter_preset: EnumProperty(
         name='Shutter Speed',
         items=generateShutterSpeeds,
-        default=6,
+        default=10,
         update=updateExposure
     ) # type: ignore
 
@@ -246,6 +270,12 @@ class CameraExposureSettings(PropertyGroup):
         precision=2,
         step=100/3,  # 1/3 stop increments
         update=updateExposure
+    ) # type: ignore
+
+    comp_dir: BoolProperty(
+        name='Meter Exposure Compensation Direction',
+        description="'Additive' for (+EC) brighter, (-EC) darker; 'Subtractive' to reverse EC direction",
+        default=True,
     ) # type: ignore
 
     show_advanced: BoolProperty(
@@ -321,8 +351,9 @@ class CAMERA_PT_exposure_settings(Panel):
         if context.scene.cycles:
             col.separator()
             exposure_val = context.scene.cycles.film_exposure
-            ev_display = 9.26 - log2(exposure_val) if exposure_val > 0 else 0
-            text = f'Scene Film Exposure: {exposure_val:.3f} ({ev_display:+.2f} EV)'
+            # 9.26 - log2...
+            ev_display =  8.44361 - log2(exposure_val) if exposure_val > 0 else 0
+            text = f'Scene Film Exposure: {ev_display:+.1f} EV ({exposure_val:.2e})'
             icon = 'FILE_MOVIE'
             if not_active_camera:
                 col.alert = 1
