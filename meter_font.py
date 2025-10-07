@@ -4,7 +4,6 @@ from math import *
 from .light_meter import confirmPanel, getDisplayPos, calcMeasuredFromEV, \
     LIGHTMETER_PT_main_panel as LIGHTMETER_PT, LightMeterProperties
 # from .main import stepTenths
-    
 
 # Constants
 TEXT_CONTENT = 'digit_1.png'

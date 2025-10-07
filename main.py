@@ -39,14 +39,13 @@ SHUTTER_VALUES = [
     ('512', '1/500', ''), ('256', '1/250', ''), ('128', '1/125', ''),
     ('64', '1/60', ''), ('32', '1/30', ''), ('16', '1/15', ''),
     ('8', '1/8', ''), ('4', '1/4', ''), ('2', '1/2', ''),
-    ('1', '1"', ''), ('2s', '2"', ''), ('4s', '4"', ''), ('CUSTOM', 'Custom', '')
+    ('1', '1"', ''), ('2s', '2"', ''), ('4s', '4"', '')
 ]
 
 ISO_VALUES = [
     ('50', 'ISO 50', ''), ('100', 'ISO 100', ''), ('200', 'ISO 200', ''),
     ('400', 'ISO 400', ''), ('800', 'ISO 800', ''), ('1600', 'ISO 1600', ''),
     ('3200', 'ISO 3200', ''), ('6400', 'ISO 6400', ''), ('12800', 'ISO 12800', ''),
-    ('CUSTOM', 'Custom', '')
 ]
 
 def dprint(*args, **kwargs):
@@ -68,7 +67,6 @@ def generateShutterSpeeds(self=0, context=0):
         label = labels[i]
         identifier = str(ms)  # Use ms value as identifier
         speeds.append((identifier, label, identifier + ' ms'))
-    # speeds.append(('CUSTOM', 'Custom', ''))
 
     return speeds
 
@@ -137,17 +135,11 @@ def updateExposure(self, context):
     f_stop = apertureFromExponent(exposure_props.aperture_preset)
     print(f'{f_stop=};')
 
-    if exposure_props.shutter_preset == 'CUSTOM':
-        shutter_in_s = exposure_props.shutter_custom
-    else:
-        shutter_val = exposure_props.shutter_preset
-        shutter_in_s = float(shutter_val)*1e-3
+    shutter_val = exposure_props.shutter_preset
+    shutter_in_s = float(shutter_val)*1e-3
     dprint(f'{shutter_in_s=}')
 
-    if exposure_props.iso_preset == 'CUSTOM':
-        iso = exposure_props.iso_custom
-    else:
-        iso = float(exposure_props.iso_preset)
+    iso = float(exposure_props.iso_preset)
     dprint(f'{iso=}')
 
     # Apply EV adjustment
@@ -189,15 +181,6 @@ class CameraExposureSettings(PropertyGroup):
         update=updateAperture
     ) # type: ignore
 
-    aperture_custom: FloatProperty(
-        name='Custom F-Stop',
-        min=0.1, max=128.0,
-        default=2.8,
-        precision=1,
-        step=100,
-        update=updateExposure
-    ) # type: ignore
-
     shutter_preset: EnumProperty(
         name='Shutter Speed',
         items=generateShutterSpeeds,
@@ -205,26 +188,10 @@ class CameraExposureSettings(PropertyGroup):
         update=updateExposure
     ) # type: ignore
 
-    shutter_custom: FloatProperty(
-        name='Custom Shutter',
-        min=0.0001, max=30.0,
-        default=1.0/60,
-        precision=4,
-        update=updateExposure
-    ) # type: ignore
-
     iso_preset: EnumProperty(
         name='ISO',
         items=generateISOSpeeds,
         default=20,
-        update=updateExposure
-    ) # type: ignore
-
-    iso_custom: FloatProperty(
-        name='Custom ISO',
-        min=25, max=204800,
-        default=100,
-        precision=0,
         update=updateExposure
     ) # type: ignore
 
@@ -292,20 +259,14 @@ class CAMERA_PT_exposure_settings(Panel):
         # Aperture row
         row = col.row(align=1)
         row.prop(props, 'aperture_preset', text='Aperture', expand=0)
-        if props.aperture_preset == 'CUSTOM':
-            row.prop(props, 'aperture_custom', slider=0)
 
         # Shutter speed row
         row = col.row(align=1)
         row.prop(props, 'shutter_preset', text='Shutter Speed')
-        if props.shutter_preset == 'CUSTOM':
-            row.prop(props, 'shutter_custom', text='')
 
         # ISO row
         row = col.row(align=1)
         row.prop(props, 'iso_preset', text='ISO Speed')
-        if props.iso_preset == 'CUSTOM':
-            row.prop(props, 'iso_custom', text='')
 
         # EV adjustment
         col.separator()

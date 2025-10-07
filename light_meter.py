@@ -212,7 +212,6 @@ def calcMeasuredFromEV(meter):
         # s = f'{EV_t};{EV_full - shift}'
         EV_full = floor(EV_t)
         EV_frac = round(10*(EV_t - EV_full))
-        
 
         return EV_full, EV_frac
         N = apertureFromMeter(meter)
@@ -483,7 +482,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
 
         # === Analog scale (-3 to +3 EV) ===
         # scale_box = layout.box()
-        
         # # Scale labels
         # labels = scale_box.row(align=True)
         # labels.scale_y = 0.9
@@ -498,7 +496,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         #     frac = meter.ev_value - floor(meter.ev_value)
         #     shift = int(round(frac * 3))
         #     idx = max(0, min(6, 3 + shift))
-        
+
         # for i in range(7):
         #     if i == idx:
         #         indicator.label(text='|', icon='KEYFRAME_HLT')
