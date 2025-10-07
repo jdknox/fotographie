@@ -80,44 +80,22 @@ def generateEVIndices(steps=3):
     start, end = (-2*steps, 15*steps + (3 - steps))
     return [a/steps for a in range(start, end, +1)]
 
-def _generateApertures(self=0, context=0):
-    apertures = []
-    steps = 3
-    start, end = (-2*steps, 15*steps + (3 - steps))
-    for i in range(start, end, +1):
-        fstop = 2**(i/(2*steps))  # sqrt(2) progression from f/0.5
-        fstop_str = str(round(fstop, 3))
-        signif = max(min(1, 1 - floor(log10(fstop))), 0)
-        frac = fstop*pow(10, signif) % 1
-        dumb = frac < 2/3
-        if fstop < 0.6:
-            signif += 1
-        if dumb:
-            label = floor2(fstop, signif)
-        else:
-            label = round(fstop, signif)
-        label = f'{{:.{signif}f}}'.format(label)
-        apertures.append((fstop_str, label, f'{{:.{signif+1}f}}'.format(fstop)))
-    # apertures.append(('CUSTOM', 'Custom', ''))
-
-    return apertures
 def generateApertures(self=0, context=0):
-    steps = 3
+    steps = 2
     fmt = ' =EV {:+2d}= '
     filtered = []
     if steps == MAX_STEPS:
         filtered = [('0', fmt.format(APERTURE_OFFSET//MAX_STEPS), '')]
     for i, a in enumerate(APERTURE_LABELS):
         include = (i % (MAX_STEPS//steps)) == 0
+        exponent = i + APERTURE_OFFSET
+        ev_a = exponent/MAX_STEPS
         if a[0] and include:
             sp = ' '*min(1, i % steps)
             new_a = a[1][min(1, i % steps):]
-            filtered.append((a[0], sp+new_a, a[2]))
+            filtered.append((str(exponent), sp+new_a, f'EV_a:{ev_a:0.1f}'))
         elif (steps == MAX_STEPS) and (i % MAX_STEPS == 5):
-            ev_a = (i + APERTURE_OFFSET)//MAX_STEPS
-            filtered.append(('0', fmt.format(ev_a + 1), ''))
-    # for c in range(256):
-    #     filtered.append((f'{c}', f'{c}:{chr(c)}', f'{c}:{chr(c)}'))
+            filtered.append(('0', fmt.format(int(ev_a) + 1), ''))
     return filtered
 
 def generateISOSpeeds(self=0, context=0):
@@ -129,6 +107,18 @@ def generateISOSpeeds(self=0, context=0):
             display = str(ident if ident < 4 else round(ident))
             all_thirds.append((str(ident), display, ''))
     return all_thirds
+
+def isneg(x):
+    return 0 if x >= 0 else 1
+
+def evaFromExponent(exponent):
+    return float(exponent)/MAX_STEPS
+
+def apertureFromExponent(exponent):
+    # index = int(exponent) - APERTURE_OFFSET
+    # return float(F_NUMBERS[index])
+    eva = evaFromExponent(exponent)
+    return pow(2, eva/2)
 
 def updateAperture(self, context):
     # Update other settings
@@ -144,31 +134,7 @@ def updateExposure(self, context):
     camera_data = context.camera
     exposure_props = camera_data.exposure_settings
 
-    # Get values
-    # if exposure_props.aperture_preset == 'CUSTOM':
-    #     is_updating = 1
-    #     value = exposure_props.aperture_custom
-    #     context.scene['value'] = float(value)
-    #     # bpy.ops.camera.aperture_knob('INVOKE_REGION_WIN')
-    #     step =  round(log2(value)*2 + 1)
-    #     F_STOPS = [1.0, 1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0]
-    #     f_stop = min(F_STOPS, key=lambda x: abs(x - value))
-    #     print(f'{f_stop=}')
-    #     #pow(2, (int(step) - 1)/2)
-    #     # exposure_props.aperture_custom = f_stop
-    #     is_updating = 0
-    # else:
-    #     is_updating = 1
-    #     value = exposure_props.aperture_custom
-    #     context.scene['value'] = float(value)
-    #     APERTURE_VALUES[0] = (str(drag_updating), f'f/{drag_updating}', '')
-    #     drag_updating += 1
-    #     # if not drag_updating:
-    #     #     bpy.ops.camera.aperture_knob('INVOKE_REGION_WIN')
-    if exposure_props.aperture_preset == 'CUSTOM':
-        pass
-    else:
-        f_stop = float(exposure_props.aperture_preset)
+    f_stop = apertureFromExponent(exposure_props.aperture_preset)
     print(f'{f_stop=};')
 
     if exposure_props.shutter_preset == 'CUSTOM':

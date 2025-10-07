@@ -8,8 +8,10 @@ from mathutils import *
 from math import *
 from bpy.props import *
 
-from .main import generateApertures, generateShutterSpeeds, generateISOSpeeds, \
-    CameraExposureSettings
+# from .main import generateApertures, generateShutterSpeeds, generateISOSpeeds, \
+#     apertureFromExponent, \
+#     CameraExposureSettings
+from .main import *
 
 LAYOUT_PADDING_PIXELS = {
     'LAYOUT_BOX': -1,
@@ -160,13 +162,9 @@ def getShutterSeconds(meter):
     s = getShutterMilliseconds(meter)/1000
     return s
 
-def getFStop(meter):
-    return float(meter.exposure_settings.aperture_preset)
-    idx = meter.f_index
-    F_STOPS = generateApertures()
-    if idx < 0 or idx >= len(F_STOPS):
-        return 4*sqrt(2)
-    return F_STOPS[idx][3]
+def apertureFromMeter(meter):
+    exponent = meter.exposure_settings.aperture_preset
+    return apertureFromExponent(exponent)
 
 def formatShutter(t):
     if t < 1:
@@ -185,12 +183,12 @@ def calcMeasuredFromEV(meter):
     # EV at current ISO, using: EV_S = log2(N^2/t) - log2(S/100)
     # N^2/t = ES_100/C = ES100_C
     # N_100 = sqrt(t*ES100_C)
+    # EV = 2*EV_a - EV_t - EV_S
     ev = meter.ev_value
-    exp = meter.exposure_settings
-    comp_dir = 1 if exp.comp_dir else -1
-    ES100_C = 2**(ev - comp_dir*exp.ev_adjustment)
-    S = float(exp.iso_preset)
-    # C = float(meter.calibration_constant)
+    exps: CameraExposureSettings = meter.exposure_settings
+    comp_dir = 1 if exps.comp_dir else -1
+    ES100_C = 2**(ev - comp_dir*exps.ev_adjustment)
+    S = float(exps.iso_preset)
     ES_C = ES100_C*S/100
     if ev <= -9.9:
         return ('—', '—')
@@ -205,7 +203,19 @@ def calcMeasuredFromEV(meter):
         return floor(full), round(10*frac)
     if meter.mode == 'F':
         # Inputs: F + ISO -> measure T
-        N = getFStop(meter)
+        EV_a = evaFromExponent(exps.aperture_preset)
+        EV_t = EV_a - ev - log2(S/100)
+        shift = isneg(EV_t)
+
+        # EV_full = int(EV_t)
+        # EV_frac = round(10*(EV_t - EV_full + shift))
+        # s = f'{EV_t};{EV_full - shift}'
+        EV_full = floor(EV_t)
+        EV_frac = round(10*(EV_t - EV_full))
+        
+
+        return EV_full, EV_frac
+        N = apertureFromMeter(meter)
         t = N*N/(ES_C)
         # print(f'{t=}; {N=}')
         # quant = stepTenths(1/t)
@@ -217,7 +227,7 @@ def calcMeasuredFromEV(meter):
         return round(quant, 1 - s), frac
     # TF: Inputs: T + F -> measure ISO
     t = getShutterSeconds(meter)
-    N = getFStop(meter)
+    N = apertureFromMeter(meter)
     S_meas = 100.0*(N*N/t)/ES100_C
     S_meas = max(3, min(409600, S_meas))
     return ('ISO', f'{int(round(S_meas))}')
@@ -406,7 +416,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op.group_attr = 'exposure_settings'
             op.prop_name = 'aperture_preset'
             op.direction = +1
-            c1.box().label(text=f'{getFStop(meter):.1f}')
+            c1.box().label(text=f'{apertureFromMeter(meter):.2f}')
         else:
             display_type = 'F'
             aux='f/'
