@@ -203,6 +203,8 @@ def calcMeasuredFromEV(meter):
     ev = meter.ev_value
     exps: CameraExposureSettings = meter.exposure_settings
     comp_dir = 1 if exps.comp_dir else -1
+    step_size = int(exps.step_size)
+
     ES100_C = 2**(ev - comp_dir*exps.ev_adjustment)
     S = float(exps.iso_preset)
     ES_C = ES100_C*S/100
@@ -217,6 +219,7 @@ def calcMeasuredFromEV(meter):
         full = pow(2, floor(2*log2(N))/2)
         frac = stepTenths(ev)
         return floor(full), round(10*frac)
+
     if meter.mode == 'F':
         # Inputs: F + ISO -> measure T
         EV_a = evaFromExponent(exps.aperture_preset)
@@ -225,21 +228,13 @@ def calcMeasuredFromEV(meter):
         # EV_full = int(EV_t)
         # EV_frac = round(10*(EV_t - EV_full + shift))
         # s = f'{EV_t};{EV_full - shift}'
-        EV_full = floor(EV_t)
+        EV_full = floor(EV_t*step_size)/step_size
         EV_frac = round(10*(EV_t - EV_full))
-        shutter = snapShutterFast(pow(2, EV_full))
+        shutter = snapShutterFast(pow(2, -EV_full))
+        print(f'{EV_t=:.3f}; {shutter=:.1f}')
 
-        return round(1/shutter), EV_frac
-        N = apertureFromMeter(meter)
-        t = N*N/(ES_C)
-        # print(f'{t=}; {N=}')
-        # quant = stepTenths(1/t)
-        # print(t, 1/t, quant)
-        full = N*N/2**floor(ev)
-        frac = round(10*(ev % 1))
-        quant = 1/(1.024*full)
-        s = floor(log10(quant))
-        return round(quant, 1 - s), frac
+        return shutter, EV_frac
+
     # TF: Inputs: T + F -> measure ISO
     t = getShutterSeconds(meter)
     N = apertureFromMeter(meter)
@@ -430,11 +425,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op.direction = -1
             c1.prop_with_popover(exps, 'aperture_preset', text='',
                                  panel=LIGHTMETER_PT_aperture_menu.bl_idname)
-            # c1.popover(panel=MY_MT_SelectMenu.bl_idname)
-            # c1.operator('lightmeter.aperture_popup')
-            # c1.menu(MY_MT_SelectMenu.bl_idname, text=exps.aperture_preset)
-            # c1.prop(exps, 'aperture_preset', text='')
-            # c1.prop_menu_enum(exps, 'aperture_preset', text='')
             op = c1.operator('lightmeter.step_enum', text='', icon='TRIA_DOWN', emboss=0)
             op.group_attr = 'exposure_settings'
             op.prop_name = 'aperture_preset'
@@ -450,12 +440,12 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op = c2.operator('lightmeter.step_enum', text='', icon='TRIA_UP', emboss=False)
             op.group_attr = 'exposure_settings'
             op.prop_name = 'iso_preset'
-            op.direction = 1
+            op.direction = -1
             c2.prop(exps, 'iso_preset', text='')
             op = c2.operator('lightmeter.step_enum', text='', icon='TRIA_DOWN', emboss=False)
             op.group_attr = 'exposure_settings'
             op.prop_name = 'iso_preset'
-            op.direction = -1
+            op.direction = +1
             c2.box().label(text=f'{exps.iso_preset}')
         else:
             display_type = 'ISO'
@@ -556,8 +546,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         settings_col.prop(meter, 'resolution')
         settings_col.prop(meter, 'sample_count')
         # settings_col.prop(meter, 'show_rgb')
-        # dump_op = settings_col.operator('lightmeter.dump_panel_layout', text='Export Panel Layout', icon='TEXT')
-        # dump_op.layout_json = repr(layout.introspect()[0])
 
 # ============= PROPERTIES =============
 class LightMeterProperties(bpy.types.PropertyGroup):
@@ -638,98 +626,10 @@ class LightMeterProperties(bpy.types.PropertyGroup):
 
     panel_open: IntProperty(default=0) # type:ignore
 
-class LIGHTMETER_OT_dump_panel_layout(bpy.types.Operator):
-    bl_idname = 'lightmeter.dump_panel_layout'
-    bl_label = 'Dump Panel Layout'
-    bl_options = {'INTERNAL'}
-
-    layout_json: StringProperty(default='') # type: ignore
-
-    def execute(self, context):
-        stupid = self.layout_json.replace("'", '"')
-        layout_data = json.loads(stupid)
-        padding = []
-        collectLayoutTypes(layout_data, padding)
-
-        text = bpy.data.texts.get('panel_layout.json')
-        if text is None:
-            text = bpy.data.texts.new('panel_layout.json')
-        text.clear()
-        formatted_layout = json.dumps(layout_data, indent=2).replace('"', "'")
-        text.write(formatted_layout)
-        text.write('\n\n')
-        text.write(str(padding))
-        return {'FINISHED'}
-
 class LightMeterPanelState(bpy.types.PropertyGroup):
     panel_category: StringProperty(default='') #type:ignore
     is_open: BoolProperty(default=False) #type:ignore
     measuring: BoolProperty(default=False) #type:ignore
-
-class LIGHTMETER_OT_aperture_pops(bpy.types.Operator):
-    bl_idname = 'lightmeter.aperture_popup'
-    bl_label = 'Pick Aperture'
-
-    value: IntProperty(default=0)
-
-    def invoke(self, context, event):
-        exps = context.scene.light_meter.exposure_settings
-        w = 100*int(exps.step_size)
-        if self.value:
-            print(f'{event.mouse_x=}')
-            context.window.cursor_warp(event.mouse_x - 100, event.mouse_y)
-            # context.window.cursor_warp(event.mouse_x, event.mouse_y)
-        # return context.window_manager.invoke_popup(self, width=w)
-        return {'FINISHED'}
-
-    # def draw(self, context):
-    #     exps = context.scene.light_meter.exposure_settings
-    #     layout = self.layout
-    #     cols = 1*int(exps.step_size)
-    #     grid = layout.grid_flow(columns=cols, align=1, row_major=1)
-    #     for a in generateApertures(exps):
-    #         # grid.operator('lightmeter.aperture_popup', text=a[1])
-    #         # grid.prop_enum(exps, 'aperture_preset', value=a[0], icon='DOT')
-    #         op = grid.operator(self.bl_idname, text=a[1],
-    #                            depress=exps.aperture_preset == a[0])
-    #         op.close = bool(a[0])
-    #     # self.close = 1
-
-    def execute(self, context):
-        print(f'CALLING: {self}')
-        return {'FINISHED'}
-
-# class LIGHTMETER_MT_aperture_popover(bpy.types.Menu):
-#     bl_idname = 'LIGHTMETER_MT_aperture_popover'
-#     bl_label = 'Aperture Presets'
-#     # bl_space_type = 'VIEW_3D'
-#     # bl_region_type = 'UI'
-#     # bl_category = BL_CATEGORY
-#     # bl_ui_units_x = 150
-
-#     # @classmethod
-#     # def poll(cls, context):
-#     #     return hasattr(context.scene, 'light_meter')
-
-#     def draw(self, context):
-#         exps = context.scene.light_meter.exposure_settings
-#         layout = self.layout
-#         s = 1
-#         # layout.ui_units_x = s
-#         cols = 1*int(exps.step_size)
-#         grid = layout.row(align=1)
-#         c = [grid.column(align=1) for _ in range(3)]
-#         # c[1].label(text='1')
-#         # grid.ui_units_x = 2
-#         col = cols
-#         row = None
-#         for a in generateApertures(exps)[:]:
-#             if col == cols:
-#                 col = 0
-#             # row.prop_enum(exps, 'aperture_preset', value=a[0], icon='DOT')
-#             c[col].operator('lightmeter.aperture_popup', text=a[1]).value
-#             col += 1
-#         c[2].separator()
 
 def defer(a, b, c):
     bpy.app.timers.register(lambda: setattr(a, b, c))
@@ -792,7 +692,6 @@ classes = [
     LightMeterProperties,
     LIGHTMETER_OT_measure,
     LIGHTMETER_OT_step_enum,
-    LIGHTMETER_OT_dump_panel_layout,
     LIGHTMETER_PT_main_panel,
 ]
 
@@ -824,34 +723,6 @@ def setPanelMeasuring(panel, is_measuring=1):
     state = getPanelState(panel)
     state.measuring = is_measuring
     return state
-
-def ensureUniquePanelIdname():
-    panel = LIGHTMETER_PT_main_panel
-    existing = 0
-    for attr in dir(bpy.types):
-        candidate = getattr(bpy.types, attr)
-        if candidate is bpy.types.Panel: continue
-        if isinstance(candidate, type) and issubclass(candidate, bpy.types.Panel):
-            if candidate.bl_rna.name == panel.__name__:
-                panel = candidate
-                existing += 1
-                continue
-            if candidate.bl_space_type == 'VIEW_3D' \
-                and candidate.bl_region_type == 'UI' \
-                and candidate.bl_category == panel.bl_category \
-            :
-                existing += 1
-
-    base_id = panel.bl_category
-    if existing <= 1:
-        print('SAFE')
-        return
-
-    suffix = 10
-    new_category = f'.{base_id}'
-    panel.bl_category = new_category
-    bpy.utils.unregister_class(panel)
-    bpy.utils.register_class(panel)
 
 def register():
     # ensureUniquePanelIdname()

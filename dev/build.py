@@ -21,7 +21,7 @@ timestomp = datetime.fromtimestamp(mtime).strftime('%y.%m%d.%H%M')
 
 print(f'\nBUILD ({os.path.abspath(".")})\n')
 
-tmp_path = Path('dev/_blender_manifest.toml')
+tmp_path = 'dev/_blender_manifest.toml'
 dst_path = Path('blender_manifest.toml')
 
 out = open(tmp_path, 'w', newline='\n')
@@ -36,7 +36,6 @@ with open('dev/blender_manifest.toml', 'r') as f:
     lines = f.readlines()
     for line in lines:
         if line.startswith('version ='):
-            print('old', line)
             line = f"version = '{timestomp}'\n"
         out.write(line)
 

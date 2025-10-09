@@ -88,23 +88,13 @@ def generateEVIndices(steps=3):
 
 def generateApertures(self=0, context=0):
     steps = int(self.step_size)
-    # self.aperture_index
-    # updateStepSize(self, context)
-    # print(f'generateApertures(): {steps=}')
-    # fmt = ' =EV {:+2d}= '
     filtered = []
-    # if steps == MAX_STEPS:
-    #     filtered = [('0', fmt.format(APERTURE_OFFSET//MAX_STEPS), '')]
     for i, a in enumerate(APERTURE_LABELS):
         include = (i % (MAX_STEPS//steps)) == 0
         exponent = i + APERTURE_OFFSET
         ev_a = exponent/MAX_STEPS
         if a[0] and include:
-            sp = ''#' '*min(1, i % steps)
-            new_a = a[1]#[min(1, i % steps):]
-            filtered.append((str(exponent), sp+new_a, f'EV_a:{ev_a:0.1f}'))
-        # elif (steps == MAX_STEPS) and (i % MAX_STEPS == 5):
-        #     filtered.append(('0', fmt.format(int(ev_a) + 1), ''))
+            filtered.append((str(exponent), a[1], f'EV_a:{ev_a:0.1f}'))
     return filtered
 
 def generateISOSpeeds(self=0, context=0):
@@ -115,7 +105,7 @@ def generateISOSpeeds(self=0, context=0):
             ident = iso*pow(10, b)
             display = str(ident if ident < 4 else round(ident))
             all_thirds.append((str(ident), display, ''))
-    return all_thirds
+    return reversed(all_thirds)
 
 def isneg(x):
     return 0 if x >= 0 else 1

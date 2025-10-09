@@ -43,7 +43,7 @@ def drawText(panel):
     full, frac = calcMeasuredFromEV(meter)
     # full, frac = stepTenths(float(value_str))
 
-    text = f'{full}'
+    text = f'{full:.2f}'
 
     size = TEXT_SIZE*uiscale
     pad = size/2
