@@ -1,3 +1,29 @@
+# License at end of file
+
+bl_info = {
+    'name': 'Fotographie',
+    'author': 'jdknox',
+    'description': 'Physically based camera exposure settings and light meter',
+    'blender': (4, 2, 0),
+    'version': (1, 0, 0),
+    'location': '3D Viewport > Sidebar > Light Meter',
+    'warning': '',
+    'category': {'3D View'},
+}
+
+from .dev import build
+from . import auto_load
+
+auto_load.init()
+
+
+def register():
+    auto_load.register()
+
+
+def unregister():
+    auto_load.unregister()
+
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3 of the License, or
@@ -10,15 +36,3 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
-
-from . import auto_load
-
-auto_load.init()
-
-
-def register():
-    auto_load.register()
-
-
-def unregister():
-    auto_load.unregister()
