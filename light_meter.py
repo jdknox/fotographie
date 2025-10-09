@@ -2,16 +2,19 @@
 
 import bpy
 import gpu
+from bpy.props import *
+from mathutils import *
+
 import json, time
 import numpy as np
-from mathutils import *
 from math import *
-from bpy.props import *
 
 # from .main import generateApertures, generateShutterSpeeds, generateISOSpeeds, \
 #     apertureFromExponent, \
 #     CameraExposureSettings
 from .main import *
+
+BL_CATEGORY = 'Super Light Meter'
 
 LAYOUT_PADDING_PIXELS = {
     'LAYOUT_BOX': -1,
@@ -31,7 +34,7 @@ def getEnumIdentifiers(container, prop_name):
     current = getattr(container, prop_name)
     items = []
     index = -1
-    for i, item in enumerate(fn()):
+    for i, item in enumerate(fn(container)):
         items.append(item[0])
         if item[0] == current:
             index = i
@@ -179,6 +182,19 @@ def stepTenths(ev):
     # frac = round(10*(step - full))
     # return int(2**(full/2)), frac
 
+def snapShutterFast(denom):
+    if denom <= 0: return 0
+    l = log10(denom)
+    k = floor(l)
+    index = round((l - k)*10)
+
+    factor = RENARD_SERIES[index]
+    if abs(log2(denom)) < 6.3 and index in EXCEPTIONS:
+        factor = EXCEPTIONS[index]
+
+    val = factor*(10**k)
+    return int(val) if k >= 0 else val
+
 def calcMeasuredFromEV(meter):
     # EV at current ISO, using: EV_S = log2(N^2/t) - log2(S/100)
     # N^2/t = ES_100/C = ES100_C
@@ -205,15 +221,15 @@ def calcMeasuredFromEV(meter):
         # Inputs: F + ISO -> measure T
         EV_a = evaFromExponent(exps.aperture_preset)
         EV_t = EV_a - ev - log2(S/100)
-        shift = isneg(EV_t)
 
         # EV_full = int(EV_t)
         # EV_frac = round(10*(EV_t - EV_full + shift))
         # s = f'{EV_t};{EV_full - shift}'
         EV_full = floor(EV_t)
         EV_frac = round(10*(EV_t - EV_full))
+        shutter = snapShutterFast(pow(2, EV_full))
 
-        return EV_full, EV_frac
+        return round(1/shutter), EV_frac
         N = apertureFromMeter(meter)
         t = N*N/(ES_C)
         # print(f'{t=}; {N=}')
@@ -246,7 +262,9 @@ class LIGHTMETER_OT_step_enum(bpy.types.Operator):
         meter = context.scene.light_meter
         exps:CameraExposureSettings = meter.exposure_settings
 
-        idx_cur, identifiers = getEnumIdentifiers(exps, self.prop_name)
+        idx, identifiers = getEnumIdentifiers(exps, self.prop_name)
+        # identifiers = generateApertures(exps)
+        idx_cur = exps.get(self.prop_name)
         # if not identifiers:
         #     return {'CANCELLED'}
 
@@ -351,7 +369,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
     bl_idname = 'LIGHTMETER_PT_main_panel'
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Light Meter'
+    bl_category = BL_CATEGORY
     bl_order = -1
     # bl_category = 'Text'
     bl_hash = id(bl_idname)
@@ -410,7 +428,13 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op.group_attr = 'exposure_settings'
             op.prop_name = 'aperture_preset'
             op.direction = -1
-            c1.prop(exps, 'aperture_preset', text='')
+            c1.prop_with_popover(exps, 'aperture_preset', text='',
+                                 panel=LIGHTMETER_PT_aperture_menu.bl_idname)
+            # c1.popover(panel=MY_MT_SelectMenu.bl_idname)
+            # c1.operator('lightmeter.aperture_popup')
+            # c1.menu(MY_MT_SelectMenu.bl_idname, text=exps.aperture_preset)
+            # c1.prop(exps, 'aperture_preset', text='')
+            # c1.prop_menu_enum(exps, 'aperture_preset', text='')
             op = c1.operator('lightmeter.step_enum', text='', icon='TRIA_DOWN', emboss=0)
             op.group_attr = 'exposure_settings'
             op.prop_name = 'aperture_preset'
@@ -507,6 +531,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         # settings_box = layout.box()
         header, settings_box = layout.panel_prop(meter, 'show_settings')
         text = f'Settings: ({meter.illuminance:0.1f} lx; {meter.ev_value:0.3f})'
+        text += f' (open:{meter.panel_open})'
         header.label(text=text, icon='PREFERENCES')
         if not meter.show_settings:
             return
@@ -515,12 +540,14 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         settings_col.use_property_split = 1
         settings_col.use_property_decorate = 0
 
-        comp = settings_col.split(align=1, factor=0.35)
+        comp = settings_col.split(align=1, factor=0.41)
         comp.use_property_split = 0
         comp_text = 'Additive' if exps.comp_dir else 'Subtractive'
         comp_icon = 'ADD' if exps.comp_dir else 'REMOVE'
         comp.prop(exps, 'comp_dir', text=comp_text, icon=comp_icon)
         comp.prop(exps, 'ev_adjustment', text='EC')
+
+        settings_col.prop(exps, 'step_size')
         settings_col.prop(meter, 'tenth_steps')
 
         settings_col.separator()
@@ -540,16 +567,16 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         default=0.0,
         min=0.0,
         precision=1
-    )
+    ) # type: ignore
 
-    illuminance_rgb: FloatVectorProperty(default=[0.0]*3)
+    illuminance_rgb: FloatVectorProperty(default=[0.0]*3) # type: ignore
 
     ev_value: FloatProperty(
         name='EV',
         description='Exposure Value at current ISO',
         default=-10.0,
         precision=1
-    )
+    ) # type: ignore
 
     calibration_constant: FloatProperty(
         name='Calibration Constant',
@@ -557,7 +584,7 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         default=340,
         min=10,
         max=500
-    )
+    ) # type: ignore
 
     dome_fov: FloatProperty(
         name='Lumisphere FOV',
@@ -565,7 +592,7 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         default=180,
         min=1,
         max=220
-    )
+    ) # type: ignore
 
     resolution: IntProperty(
         name='Resolution',
@@ -573,7 +600,7 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         default=2048,
         min=128,
         max=8192
-    )
+    ) # type: ignore
 
     sample_count: IntProperty(
         name='Samples',
@@ -581,14 +608,14 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         default=16,
         min=1,
         max=4096
-    )
+    ) # type: ignore
 
     show_rgb: BoolProperty(
         name='Show RGB',
         description='Display RGB channel breakdown',
         default=False
-    )
-    show_settings: BoolProperty(name='Settings', default=False)
+    ) # type: ignore
+    show_settings: BoolProperty(name='Settings', default=False) # type: ignore
 
     # Sekonic mode + settings
     mode: EnumProperty(
@@ -600,14 +627,16 @@ class LightMeterProperties(bpy.types.PropertyGroup):
             ('TF', 'TF Priority', 'T+F priority (measure ISO)'),
         ],
         default='T'
-    )
+    ) # type: ignore
 
-    exposure_settings: PointerProperty(type=CameraExposureSettings)
+    exposure_settings: PointerProperty(type=CameraExposureSettings) # type: ignore
 
     tenth_steps: BoolProperty(
         name='Show 1/10 Steps',
         default=True
-    )
+    ) # type: ignore
+
+    panel_open: IntProperty(default=0) # type:ignore
 
 class LIGHTMETER_OT_dump_panel_layout(bpy.types.Operator):
     bl_idname = 'lightmeter.dump_panel_layout'
@@ -636,6 +665,125 @@ class LightMeterPanelState(bpy.types.PropertyGroup):
     panel_category: StringProperty(default='') #type:ignore
     is_open: BoolProperty(default=False) #type:ignore
     measuring: BoolProperty(default=False) #type:ignore
+
+class LIGHTMETER_OT_aperture_pops(bpy.types.Operator):
+    bl_idname = 'lightmeter.aperture_popup'
+    bl_label = 'Pick Aperture'
+
+    value: IntProperty(default=0)
+
+    def invoke(self, context, event):
+        exps = context.scene.light_meter.exposure_settings
+        w = 100*int(exps.step_size)
+        if self.value:
+            print(f'{event.mouse_x=}')
+            context.window.cursor_warp(event.mouse_x - 100, event.mouse_y)
+            # context.window.cursor_warp(event.mouse_x, event.mouse_y)
+        # return context.window_manager.invoke_popup(self, width=w)
+        return {'FINISHED'}
+
+    # def draw(self, context):
+    #     exps = context.scene.light_meter.exposure_settings
+    #     layout = self.layout
+    #     cols = 1*int(exps.step_size)
+    #     grid = layout.grid_flow(columns=cols, align=1, row_major=1)
+    #     for a in generateApertures(exps):
+    #         # grid.operator('lightmeter.aperture_popup', text=a[1])
+    #         # grid.prop_enum(exps, 'aperture_preset', value=a[0], icon='DOT')
+    #         op = grid.operator(self.bl_idname, text=a[1],
+    #                            depress=exps.aperture_preset == a[0])
+    #         op.close = bool(a[0])
+    #     # self.close = 1
+
+    def execute(self, context):
+        print(f'CALLING: {self}')
+        return {'FINISHED'}
+
+# class LIGHTMETER_MT_aperture_popover(bpy.types.Menu):
+#     bl_idname = 'LIGHTMETER_MT_aperture_popover'
+#     bl_label = 'Aperture Presets'
+#     # bl_space_type = 'VIEW_3D'
+#     # bl_region_type = 'UI'
+#     # bl_category = BL_CATEGORY
+#     # bl_ui_units_x = 150
+
+#     # @classmethod
+#     # def poll(cls, context):
+#     #     return hasattr(context.scene, 'light_meter')
+
+#     def draw(self, context):
+#         exps = context.scene.light_meter.exposure_settings
+#         layout = self.layout
+#         s = 1
+#         # layout.ui_units_x = s
+#         cols = 1*int(exps.step_size)
+#         grid = layout.row(align=1)
+#         c = [grid.column(align=1) for _ in range(3)]
+#         # c[1].label(text='1')
+#         # grid.ui_units_x = 2
+#         col = cols
+#         row = None
+#         for a in generateApertures(exps)[:]:
+#             if col == cols:
+#                 col = 0
+#             # row.prop_enum(exps, 'aperture_preset', value=a[0], icon='DOT')
+#             c[col].operator('lightmeter.aperture_popup', text=a[1]).value
+#             col += 1
+#         c[2].separator()
+
+def defer(a, b, c):
+    bpy.app.timers.register(lambda: setattr(a, b, c))
+
+class LIGHTMETER_PT_aperture_menu(bpy.types.Panel):
+    bl_label = 'Select'
+    bl_idname = 'LIGHTMETER_PT_SelectMenu'
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_options = {'INSTANCED'}
+    bl_category = BL_CATEGORY
+    bl_ui_units_x = 10
+
+    @classmethod
+    def poll(cls, context):
+        meter:LightMeterProperties = context.scene.light_meter
+        exps = meter.exposure_settings
+        if meter.panel_open == 1:
+            defer(meter, 'panel_open', 0)
+
+    def draw(self, context):
+        layout = self.layout
+        meter:LightMeterProperties = context.scene.light_meter
+        exps = meter.exposure_settings
+        layout.ui_units_x = 6*int(exps.step_size)
+
+        po = meter.panel_open
+        if po == 2:
+            defer(meter, 'panel_open', 0)
+            return
+        defer(meter, 'panel_open', 1)
+
+        cols = int(exps.step_size)
+        all = generateApertures(exps)
+        # if cols > 1:
+        #     pad = -len(all) % cols
+        #     all = np.array(all + [None]*pad, dtype=object)
+        #     all = all.reshape(-1, cols).T.flatten()
+
+        col = layout.column() #(columns=1, align=0, row_major=1)
+        col.alignment = 'LEFT'
+        i = 0
+        for a in all:
+            if not a:
+                col.label()
+                continue
+            icon = 'LAYER_USED' if (int(a[0])%6) else 'DOT'
+            if icon == 'DOT':
+                row = col.row(align=1)
+                i += 1
+            # row.alignment='LEFT'
+            row.prop_enum(exps, 'aperture_preset', value=a[0], icon=icon)
+
+        # col.template_popup_confirm('lightmeter.aperture_popup', text='')
 
 # ============= REGISTRATION =============
 

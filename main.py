@@ -2,7 +2,8 @@ import bpy
 from bpy.props import FloatProperty, EnumProperty, BoolProperty
 from bpy.types import PropertyGroup, Panel
 from mathutils import *
-from math import log2, sqrt, pow, floor, log10
+
+from math import *
 from types import SimpleNamespace as struct
 
 # Standard camera values
@@ -32,7 +33,7 @@ F_NUMBERS = [
 '180']
 
 # ▸
-APERTURE_LABELS = [(v, f'· f/{v}  ', '') for v in F_NUMBERS]
+APERTURE_LABELS = [(v, f'f/{v}  ', '', 'DOT') for v in F_NUMBERS]
 
 SHUTTER_VALUES = [
     ('4096', '1/4000', ''), ('2048', '1/2000', ''), ('1024', '1/1000', ''),
@@ -47,6 +48,13 @@ ISO_VALUES = [
     ('400', 'ISO 400', ''), ('800', 'ISO 800', ''), ('1600', 'ISO 1600', ''),
     ('3200', 'ISO 3200', ''), ('6400', 'ISO 6400', ''), ('12800', 'ISO 12800', ''),
 ]
+
+STEP_SIZES = [
+    ('1', '1 Full Stop', '1.0'), ('2', '1/2 Stop', '0.5'),  ('3', '1/3 Stop', '0.333...'), 
+]
+
+RENARD_SERIES = [1.0, 1.25, 1.6, 2.0, 2.5, 3.2, 4.0, 5.0, 6.4, 8.0, 10.0]
+EXCEPTIONS = {1: 1.3, 2: 1.5, 5: 3.0, 8: 6.0}  # de facto overrides
 
 def dprint(*args, **kwargs):
     return
@@ -79,21 +87,24 @@ def generateEVIndices(steps=3):
     return [a/steps for a in range(start, end, +1)]
 
 def generateApertures(self=0, context=0):
-    steps = 2
-    fmt = ' =EV {:+2d}= '
+    steps = int(self.step_size)
+    # self.aperture_index
+    # updateStepSize(self, context)
+    # print(f'generateApertures(): {steps=}')
+    # fmt = ' =EV {:+2d}= '
     filtered = []
-    if steps == MAX_STEPS:
-        filtered = [('0', fmt.format(APERTURE_OFFSET//MAX_STEPS), '')]
+    # if steps == MAX_STEPS:
+    #     filtered = [('0', fmt.format(APERTURE_OFFSET//MAX_STEPS), '')]
     for i, a in enumerate(APERTURE_LABELS):
         include = (i % (MAX_STEPS//steps)) == 0
         exponent = i + APERTURE_OFFSET
         ev_a = exponent/MAX_STEPS
         if a[0] and include:
-            sp = ' '*min(1, i % steps)
-            new_a = a[1][min(1, i % steps):]
+            sp = ''#' '*min(1, i % steps)
+            new_a = a[1]#[min(1, i % steps):]
             filtered.append((str(exponent), sp+new_a, f'EV_a:{ev_a:0.1f}'))
-        elif (steps == MAX_STEPS) and (i % MAX_STEPS == 5):
-            filtered.append(('0', fmt.format(int(ev_a) + 1), ''))
+        # elif (steps == MAX_STEPS) and (i % MAX_STEPS == 5):
+        #     filtered.append(('0', fmt.format(int(ev_a) + 1), ''))
     return filtered
 
 def generateISOSpeeds(self=0, context=0):
@@ -118,9 +129,22 @@ def apertureFromExponent(exponent):
     eva = evaFromExponent(exponent)
     return pow(2, eva/2)
 
+def shutterFromExponent(exponent):
+    evt = evaFromExponent(exponent)
+    return pow(2, evt)
+
 def updateAperture(self, context):
-    # Update other settings
+    meter = context.scene.light_meter
+    if meter.panel_open == 1:
+        meter.panel_open = 2
+    self.aperture_index = int(self.aperture_preset)
     updateExposure(self, context)
+
+def updateStepSize(self, context):
+    ai = self.aperture_index
+    mod = MAX_STEPS//int(self.step_size)
+    self.aperture_preset = str(ai - ai%mod)
+    context.scene.light_meter.panel_open = 0
 
 def updateExposure(self, context):
     '''Update film exposure based on camera settings'''
@@ -171,7 +195,8 @@ def updateExposure(self, context):
 
 class CameraExposureSettings(PropertyGroup):
     '''Camera exposure settings property group'''
-    aperture_index: bpy.props.IntProperty(min=0, max=len(APERTURE_LABELS)-1) # type: ignore
+    aperture_index: bpy.props.IntProperty(min=LOWEST_APERTURE_EV*MAX_STEPS,
+                                          max=HIGHEST_APERTURE_EV*MAX_STEPS) # type: ignore
 
     aperture_preset: EnumProperty(
         name='Aperture',
@@ -203,6 +228,14 @@ class CameraExposureSettings(PropertyGroup):
         precision=2,
         step=100/3,  # 1/3 stop increments
         update=updateExposure
+    ) # type: ignore
+
+    step_size: EnumProperty(
+        name='Step Size',
+        items=STEP_SIZES,
+        description='Steps size between stops.  Default is 1/3 stop.',
+        default='3',
+        update=updateStepSize,
     ) # type: ignore
 
     comp_dir: BoolProperty(

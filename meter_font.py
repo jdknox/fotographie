@@ -70,8 +70,8 @@ def drawText(panel):
 
     # tenths steps
     if meter.tenth_steps:
-        blf.size(FONT_ID, size*2/3)
-        blf.position(FONT_ID, x + w, y - size*1/3, 0)
+        blf.size(FONT_ID, size*1/2)
+        blf.position(FONT_ID, x + w, y - size*1/6, 0)
         blf.color(FONT_ID, *TEXT_COLOR)
         blf.draw(FONT_ID, str(frac))
 
