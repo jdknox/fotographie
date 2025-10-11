@@ -7,6 +7,7 @@ from mathutils import *
 
 import json, time
 import numpy as np
+from dataclasses import dataclass as struct
 from math import *
 
 # from .main import generateApertures, generateShutterSpeeds, generateISOSpeeds, \
@@ -28,6 +29,22 @@ ENUM_STEP_SOURCES = {
     'aperture_preset': generateApertures,
     'iso_preset': generateISOSpeeds,
 }
+
+@enum
+class MeteredType:
+    INVALID: 0
+    F: ...
+    T: ...
+    ISO: ...
+
+@struct
+class Metered:
+    type: MeteredType
+    ev_value: float
+    snapped: float
+    tenths: int
+    prefix: str
+    suffix: str
 
 def getEnumIdentifiers(container, prop_name):
     fn = ENUM_STEP_SOURCES.get(prop_name)
@@ -189,11 +206,13 @@ def snapShutterFast(denom):
     index = round((l - k)*10)
 
     factor = RENARD_SERIES[index]
+    # print(factor, index, k)
     if abs(log2(denom)) < 6.3 and index in EXCEPTIONS:
         factor = EXCEPTIONS[index]
 
     val = factor*(10**k)
-    return int(val) if k >= 0 else val
+    # print(factor, val)
+    return int(val) if k >= 1 else val
 
 def calcMeasuredFromEV(meter):
     # EV at current ISO, using: EV_S = log2(N^2/t) - log2(S/100)
@@ -211,6 +230,9 @@ def calcMeasuredFromEV(meter):
     if ev <= -9.9:
         return ('—', '—')
 
+    suffix = ''
+    prefix = ''
+
     if meter.mode == 'T':
         # Inputs: T + ISO -> measure F
         t = getShutterSeconds(meter)
@@ -223,17 +245,30 @@ def calcMeasuredFromEV(meter):
     if meter.mode == 'F':
         # Inputs: F + ISO -> measure T
         EV_a = evaFromExponent(exps.aperture_preset)
-        EV_t = EV_a - ev - log2(S/100)
+        ev_adj = ev - comp_dir*exps.ev_adjustment
+        EV_t = EV_a - ev_adj - log2(S/100)
 
-        # EV_full = int(EV_t)
-        # EV_frac = round(10*(EV_t - EV_full + shift))
-        # s = f'{EV_t};{EV_full - shift}'
         EV_full = floor(EV_t*step_size)/step_size
         EV_frac = round(10*(EV_t - EV_full))
-        shutter = snapShutterFast(pow(2, -EV_full))
-        print(f'{EV_t=:.3f}; {shutter=:.1f}')
+        sign = -1 if EV_t < 0 else 1
+        x = EV_full
+        if EV_t > 6:
+            x -= log2(60)
+        shutter = snapShutterFast(pow(2, sign*x))
 
-        return shutter, EV_frac
+        is_minutes = 1 if EV_t > 6 else 0
+        is_seconds = (1 - is_minutes) if EV_t > 0 else 0
+        if is_minutes:
+            suffix += "'"
+        elif is_seconds:
+            suffix += '"'
+        else:
+            prefix = '1/'
+        # print(f'{EV_t=:.3f}; {shutter=:.6f}')
+
+        return Metered(type=MeteredType.T, ev_value=EV_t,
+                       snapped=shutter, tenths=EV_frac,
+                       prefix=prefix, suffix=suffix)
 
     # TF: Inputs: T + F -> measure ISO
     t = getShutterSeconds(meter)
@@ -397,10 +432,10 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         exps = meter.exposure_settings
         display_type = ''
         aux = ''
+        ms = getShutterMilliseconds(meter)
         if meter.mode != 'F':
             c1 = set_row.column(align=True)
             c1.label(text='T')
-            ms = getShutterMilliseconds(meter)
             str_ms = f'{ms:0.0f}' if ms >= 1.0 else f'{ms}'
             op = c1.operator('lightmeter.step_enum', text='', icon='TRIA_UP', emboss=0)
             op.group_attr = 'exposure_settings'
@@ -414,7 +449,9 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             c1.box().label(text=f'{str_ms} ms')
         else:
             display_type = 'T'
-            aux = '1/'
+            # set_row.box().label(text=f'{ms} ms')
+            # if ms < 1000:
+            #     aux = f'1/'
 
         if meter.mode != 'T':
             c1 = set_row.column(align=True)

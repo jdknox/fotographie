@@ -4,7 +4,24 @@ from bpy.types import PropertyGroup, Panel
 from mathutils import *
 
 from math import *
-from types import SimpleNamespace as struct
+from types import SimpleNamespace as Struct
+
+import inspect
+
+def enum(cls):
+    _, line = inspect.getsourcelines(cls)
+    counter = 0
+    seen = set()
+    for name, hint in cls.__annotations__.items():
+        value = hint if isinstance(hint, int) else counter
+        if value in seen:
+            raise ValueError(
+                f'Duplicate enum value {value!r} in {cls.__name__} (defined at line {line})'
+            )
+        seen.add(value)
+        setattr(cls, name, value)
+        counter = value + 1
+    return cls
 
 # Standard camera values
 MAX_STEPS = 6
@@ -256,7 +273,7 @@ class CAMERA_PT_exposure_settings(Panel):
             print('DIFFERENT!')
             cls.last_camera = scene.camera
             if scene.camera.data == context.camera:
-                ctx = struct(camera=context.camera, scene=scene)
+                ctx = Struct(camera=context.camera, scene=scene)
                 bpy.app.timers.register(
                     lambda: updateExposure(None, ctx)
                 )
@@ -329,6 +346,13 @@ class CAMERA_PT_exposure_settings(Panel):
             box.prop(context.scene.render, 'motion_blur_shutter', text='Motion Blur Shutter')
             if context.scene.cycles:
                 box.prop(context.scene.cycles, 'film_exposure', text='Film Exposure')
+            box.separator()
+            b2 = box.box()
+            b2.scale_y = 0.5
+            b2.label(text='Note: common   values   for  camera', icon='INFO')
+            b2.label(text='             settings  don\'t  always  match')
+            b2.label(text='             mathematically correct values.')
+            b2.label(text='        (e.g., `f/22` = √512 ≈ f/22.63)', icon='FORWARD')
 
 def register():
     # bpy.utils.register_class(CameraExposureSettings)

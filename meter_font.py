@@ -1,8 +1,14 @@
 import bpy
 import blf
 from math import *
-from .light_meter import confirmPanel, getDisplayPos, calcMeasuredFromEV, \
-    LIGHTMETER_PT_main_panel as LIGHTMETER_PT, LightMeterProperties
+from .light_meter import (
+    confirmPanel,
+    getDisplayPos,
+    calcMeasuredFromEV,
+    Metered,
+    LIGHTMETER_PT_main_panel as LIGHTMETER_PT,
+    LightMeterProperties,
+)
 # from .main import stepTenths
 
 # Constants
@@ -40,10 +46,14 @@ def drawText(panel):
     # frac = round(step - full)
     # full /= 2
 
-    full, frac = calcMeasuredFromEV(meter)
-    # full, frac = stepTenths(float(value_str))
+    m:Metered = calcMeasuredFromEV(meter)
 
-    text = f'{full:.2f}'
+    EV_t = m.ev_value
+    full = m.snapped
+    frac = m.tenths
+
+    factor = 1 if full < 3 else None
+    text = f'{round(full, factor)}{m.suffix}'
 
     size = TEXT_SIZE*uiscale
     pad = size/2
@@ -62,6 +72,14 @@ def drawText(panel):
     x = (0.89*region.width - pad - w)/2
     y -= h/2 + 1.5*BASE_ELEM*uiscale
 
+    # 1/
+    if m.prefix:
+        blf.size(FONT_ID, size/2)
+        wp, hp = blf.dimensions(FONT_ID, m.prefix)
+        blf.position(FONT_ID, x - wp, y + hp, 0)
+        blf.color(FONT_ID, *TEXT_COLOR)
+        blf.draw(FONT_ID, m.prefix)
+
     # main display
     blf.size(FONT_ID, size)
     blf.position(FONT_ID, x, y, 0)
@@ -70,7 +88,7 @@ def drawText(panel):
 
     # tenths steps
     if meter.tenth_steps:
-        blf.size(FONT_ID, size*1/2)
+        blf.size(FONT_ID, size/2)
         blf.position(FONT_ID, x + w, y - size*1/6, 0)
         blf.color(FONT_ID, *TEXT_COLOR)
         blf.draw(FONT_ID, str(frac))
