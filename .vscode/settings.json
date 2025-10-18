@@ -1,0 +1,5 @@
+{
+    "blender.addon.buildTaskName": "fotographie-build",
+    "blender.addon.loadDirectory": "src/fotographie",
+    "blender.addon.sourceDirectory": "src/fotographie"
+}

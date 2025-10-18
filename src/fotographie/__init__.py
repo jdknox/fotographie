@@ -11,7 +11,6 @@ bl_info = {
     'category': {'3D View'},
 }
 
-from .dev import build
 from . import auto_load
 
 auto_load.init()

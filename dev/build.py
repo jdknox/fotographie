@@ -1,19 +1,30 @@
 #
 import os
 from datetime import datetime
-from pathlib import Path
-# os.chdir(os.path.dirname(os.path.abspath(__file__)) + '/..')
 
-# now = datetime.datetime.now()
-# version = (now.year % 100, now.month*100 + now.day, now.hour*100 + now.minute)
-from ..auto_load import iter_submodule_names as getSubmodules
+def iterPythonFiles(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        filtered = []
+        for dirname in dirnames:
+            if dirname.startswith('_'):
+                continue
+            if dirname in ('dev', '__pycache__', '.git', '.vscode'):
+                continue
+            filtered.append(dirname)
+        dirnames[:] = filtered
+        for filename in filenames:
+            if not filename.endswith('.py'):
+                continue
+            if filename.startswith('_'):
+                continue
+            yield f'{dirpath}/{filename}'
+
+here = __file__
+print(f'UPDATING version in "{here}"')
+package_root = os.path.dirname(os.path.dirname(here))
 mtimes = []
-
-for name in list(getSubmodules(Path('.').parent)):
-    if name != 'auto_load':
-        module_path = Path(name).with_suffix('.py')
-        mtime = os.path.getmtime(module_path)
-        mtimes.append(mtime)
+for path in iterPythonFiles(package_root):
+    mtimes.append(os.path.getmtime(path))
 mtime = max(mtimes)
 
 timestomp = datetime.fromtimestamp(mtime).strftime('%y.%m%d.%H%M')
@@ -22,7 +33,7 @@ timestomp = datetime.fromtimestamp(mtime).strftime('%y.%m%d.%H%M')
 print(f'\nBUILD ({os.path.abspath(".")})\n')
 
 tmp_path = 'dev/_blender_manifest.toml'
-dst_path = Path('blender_manifest.toml')
+dst_path = 'src/fotographie/blender_manifest.toml'
 
 out = open(tmp_path, 'w', newline='\n')
 autogen_warning = '''# ============================================== #
@@ -46,3 +57,45 @@ out.close()
 
 # atomically overwrite the old manifest
 os.replace(tmp_path, dst_path)
+
+## ------ ##
+# import shutil
+
+# OUT_ROOT = 'build'
+# PACKAGE = 'fotographie'
+# OUT_DIR = f'{OUT_ROOT}/{PACKAGE}'
+
+# def ensure_dir(path):
+#     if path and not os.path.isdir(path):
+#         os.makedirs(path, exist_ok=True)
+
+# def copy_file(src, dst):
+#     folder = os.path.dirname(dst)
+#     ensure_dir(folder)
+#     shutil.copy2(src, dst)
+
+# def copy_tree(src, dst):
+#     if os.path.isdir(dst):
+#         shutil.rmtree(dst)
+#     shutil.copytree(src, dst, dirs_exist_ok=True)
+
+# if os.path.isdir(OUT_DIR):
+#     shutil.rmtree(OUT_DIR)
+# ensure_dir(OUT_DIR)
+
+# INCLUDE = [
+#     '__init__.py',
+#     'auto_load.py',
+#     'light_meter.py',
+#     'main.py',
+#     'meter_font.py',
+#     'blender_manifest.toml',
+# ]
+
+# for entry in INCLUDE:
+#     src = entry
+#     dst = f'{OUT_DIR}/{entry}'
+#     if os.path.isdir(src):
+#         copy_tree(src, dst)
+#     elif os.path.isfile(src):
+#         copy_file(src, dst)

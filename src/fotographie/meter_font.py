@@ -5,9 +5,9 @@ from .light_meter import (
     confirmPanel,
     getDisplayPos,
     calcMeasuredFromEV,
-    Metered,
+    Metered, MeteredType,
     LIGHTMETER_PT_main_panel as LIGHTMETER_PT,
-    LightMeterProperties,
+    LightMeterProperties, aperturePresetFromExponent
 )
 # from .main import stepTenths
 
@@ -47,13 +47,17 @@ def drawText(panel):
     # full /= 2
 
     m:Metered = calcMeasuredFromEV(meter)
-
-    EV_t = m.ev_value
     full = m.snapped
     frac = m.tenths
 
-    factor = 1 if full < 3 else None
-    text = f'{round(full, factor)}{m.suffix}'
+    match m.type:
+        case MeteredType.T:
+            factor = 1 if full < 3 else None
+            text = f'{round(full, factor)}{m.suffix}'
+        case MeteredType.F:
+            text = aperturePresetFromExponent(full)
+        case _:
+            text = '--'
 
     size = TEXT_SIZE*uiscale
     pad = size/2
@@ -117,12 +121,12 @@ def register():
 
     dha = bpy.types.SpaceView3D.draw_handler_add
     font_info['handler'] = dha(drawText, (LIGHTMETER_PT,), REGION_TYPE, 'POST_PIXEL')
-    print(f'{font_info=}')
+    print(f'[ADDING]: draw handler: ({drawText.__name__}({LIGHTMETER_PT}); {REGION_TYPE})')
 
 def unregister():
     handler = font_info.get('handler', 0)
     if handler:
-        print(f'REMOVING: {handler=}')
+        # print(f'REMOVING: {handler=}')
         bpy.types.SpaceView3D.draw_handler_remove(handler, REGION_TYPE)
         font_info['handler'] = None
     else:
