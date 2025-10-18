@@ -366,69 +366,100 @@ class CameraExposureSettings(PropertyGroup):
 def reorderForColumnFlow(items, cols=3):
     '''Reorder items so column_flow produces row-major appearance'''
     filtered = [item for item in items if item[0] != '']
-    
+
     total = len(filtered)
     rows = (total + cols - 1) // cols
-    
+
     reordered = []
     for col in range(cols):
         for row in range(rows):
-            idx = row * cols + col
+            idx = row*cols + col
             if idx < total:
                 reordered.append(filtered[idx])
             else:
-                print(idx)
-                # reordered.append(('---', '---', '---'))
+                # print(idx)
                 reordered.append(('', '-', 'INVALID'))
-    
     return reordered
 
-class EXPOSURE_OT_set_shutter(bpy.types.Operator):
-    bl_idname = 'exposure.set_shutter'
-    bl_label = 'Set Shutter'
-    bl_description = 'Blender does not allow shutter information here.'
-    
+class ExposureMenuDrawer:
+    def __init__(self, prop_name, generator, columns=3):
+        self.prop_name = prop_name
+        self.generator = generator
+        self.columns = columns
+
+    def draw(self, layout, exps):
+        items = self.generator(exps)
+        reordered = reorderForColumnFlow(items[1:], cols=self.columns)
+
+        flow = layout.column_flow(columns=self.columns)
+
+        for identifier, label, *_ in reordered:
+            row = flow.column()
+            row.ui_units_y = 0.666
+
+            if identifier == '':
+                row.label(text='', icon='BLANK1')
+                continue
+
+            parsed = identifier
+            if parsed.startswith('-'):
+                parsed = parsed[1:]
+
+            exponent = 0
+            if parsed.isdigit():
+                exponent = int(identifier)
+
+            icon = 'LAYER_USED' if (exponent % MAX_STEPS) == 0 else 'DOT'
+            op = row.operator('exposure.set_preset', text=label, icon=icon)
+            op.prop_name = self.prop_name
+            op.value = identifier
+
+
+class EXPOSURE_OT_set_preset(bpy.types.Operator):
+    bl_idname = 'exposure.set_preset'
+    bl_label = 'Set Exposure Preset'
+    bl_description = 'Assign a preset value to the camera exposure setting.'
+
     value: bpy.props.StringProperty() #type:ignore
-    
+    prop_name: bpy.props.StringProperty() #type:ignore
+
     def execute(self, context):
-        context.camera.exposure_settings.shutter_preset = self.value
+        exps = context.camera.exposure_settings
+        setattr(exps, self.prop_name, self.value)
         return {'FINISHED'}
+
 
 class EXPOSURE_MT_shutter_menu(bpy.types.Menu):
     bl_label = 'Shutter Speed'
     bl_idname = 'EXPOSURE_MT_shutter_menu'
-    # bl_space_type = 'VIEW_3D'
-    # bl_region_type = 'UI'
-    # bl_options = {'INSTANCED'}
-    
+
+    drawer = ExposureMenuDrawer('shutter_preset', generateShutterSpeeds)
+
     def draw(self, context):
-        layout = self.layout
-        # exps = context.scene.exposure_settings
-        camera_data = context.camera
-        exps = camera_data.exposure_settings
-        
-        items = generateShutterSpeeds(exps)
-        reordered = reorderForColumnFlow(items[1:], cols=3)
-        
-        flow = layout.column_flow(columns=3)
-        # flow.ui_units_y = 0.5
-        # flow.scale_y = 0.5
-        
-        for identifier, label, desc in reordered:
-            exponent = int(identifier) if identifier else -1
-            icon = 'LAYER_USED' if (exponent%6) else 'DOT'
-            if 1:
-                row = flow.column()
-                row.ui_units_y=0.666
-                # row.label(text='', icon=icon)
-                if identifier:
-                    op = row.operator('exposure.set_shutter', text=label, icon=icon)
-                    op.value = identifier
-                else:
-                    row.label(text='', icon='RESTRICT_RENDER_ON')
-                    # print(f'{identifier=}, {label=}')
-            else:
-                flow.prop_enum(exps, 'shutter_preset', value=identifier, text=identifier, icon='DOT')
+        exps = context.camera.exposure_settings
+        self.drawer.draw(self.layout, exps)
+
+
+class EXPOSURE_MT_aperture_menu(bpy.types.Menu):
+    bl_label = 'Aperture'
+    bl_idname = 'EXPOSURE_MT_aperture_menu'
+
+    drawer = ExposureMenuDrawer('aperture_preset', generateApertures)
+
+    def draw(self, context):
+        exps = context.camera.exposure_settings
+        self.drawer.draw(self.layout, exps)
+
+
+class EXPOSURE_MT_iso_menu(bpy.types.Menu):
+    bl_label = 'ISO Speed'
+    bl_idname = 'EXPOSURE_MT_iso_menu'
+
+    drawer = ExposureMenuDrawer('iso_preset', generateISOSpeeds)
+
+    def draw(self, context):
+        exps = context.camera.exposure_settings
+        self.drawer.draw(self.layout, exps)
 
 class CAMERA_PT_exposure_settings(Panel):
     '''Camera exposure settings panel'''
@@ -472,7 +503,8 @@ class CAMERA_PT_exposure_settings(Panel):
 
         # Aperture row
         row = col.row(align=1)
-        row.prop(exps, 'aperture_preset', text='Aperture', expand=0)
+        row.prop_with_menu(exps, 'aperture_preset', text='Aperture',
+                           menu='EXPOSURE_MT_aperture_menu')
 
         # Shutter speed row
         row = col.row(align=1)
@@ -487,7 +519,8 @@ class CAMERA_PT_exposure_settings(Panel):
 
         # ISO row
         row = col.row(align=1)
-        row.prop(exps, 'iso_preset', text='ISO Speed')
+        row.prop_with_menu(exps, 'iso_preset', text='ISO Speed',
+                           menu='EXPOSURE_MT_iso_menu')
 
         # EV adjustment
         col.separator()
