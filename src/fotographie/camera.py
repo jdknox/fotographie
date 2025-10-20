@@ -231,7 +231,9 @@ def updateISOSpeed(self:'CameraExposureSettings', context):
     updateExposure(self, context)
 
 def updateStepSize(self, context):
-    context.scene.light_meter.panel_state = PANEL_STATE.closed
+    if not getattr(context, 'camera', 0):
+        context.scene.light_meter.panel_state = PANEL_STATE.closed
+
     ai = self.aperture_index
     si = self.shutter_index
     isoi = self.iso_index
@@ -239,7 +241,6 @@ def updateStepSize(self, context):
 
     self.aperture_preset = str(ai - ai%mod)
     self.shutter_preset = str(si - si%mod)
-
     if mod == 3: mod = 2 # We don't do ISO speeds in half steps
     self.iso_preset = str(isoi + (-isoi)%mod)
 
@@ -273,7 +274,8 @@ def updateExposure(self, context):
     dprint(f'{shutter_in_s=}')
 
     if exps.iso_preset == '':
-        exps.iso_preset = exps.bl_rna.properties['iso_preset'].default
+        # exps.iso_preset = exps.bl_rna.properties['iso_preset'].default
+        return
     iso = isoSpeedFromExponent(exps.iso_preset)
     dprint(f'{iso=}')
 
@@ -382,16 +384,16 @@ def reorderForColumnFlow(items, cols=3):
     return reordered
 
 class ExposureMenuDrawer:
-    def __init__(self, prop_name, generator, columns=3):
+    def __init__(self, prop_name, generator):
         self.prop_name = prop_name
         self.generator = generator
-        self.columns = columns
 
     def draw(self, layout, exps):
         items = self.generator(exps)
-        reordered = reorderForColumnFlow(items[1:], cols=self.columns)
+        columns = int(exps.step_size)
+        reordered = reorderForColumnFlow(items[1:], cols=columns)
 
-        flow = layout.column_flow(columns=self.columns)
+        flow = layout.column_flow(columns=columns)
 
         for identifier, label, *_ in reordered:
             row = flow.column()
@@ -475,7 +477,7 @@ class CAMERA_PT_exposure_settings(Panel):
     def poll(cls, context):
         scene = context.scene
         if scene.camera != cls.last_camera:
-            # print('DIFFERENT!')
+            print('DIFFERENT!')
             cls.last_camera = scene.camera
             if scene.camera.data == context.camera:
                 ctx = Struct(camera=context.camera, scene=scene)
@@ -496,7 +498,6 @@ class CAMERA_PT_exposure_settings(Panel):
         exps:CameraExposureSettings = camera_data.exposure_settings
 
         layout.use_property_split = 1
-        # layout.use_property_decorate = 0
 
         # Main exposure triangle
         col = layout.column(align=0)
@@ -509,13 +510,8 @@ class CAMERA_PT_exposure_settings(Panel):
         # Shutter speed row
         row = col.row(align=1)
         row.use_property_split = 1
-        # row.prop(props, 'shutter_preset', text='Shutter Speed')
-        # row.label(text='Shutter Speed')
-        # chosen = shutterFromExponent(exps.shutter_preset)
-        # chosen = snapRenard(1/chosen)
         row.prop_with_menu(exps, 'shutter_preset', text='Shutter Speed',
                               menu='EXPOSURE_MT_shutter_menu')
-        # row.menu('EXPOSURE_MT_shutter_menu', text=str(chosen))
 
         # ISO row
         row = col.row(align=1)
@@ -539,8 +535,7 @@ class CAMERA_PT_exposure_settings(Panel):
             if not_active_camera:
                 col.alert = 1
                 icon = 'UNLINKED'
-            # else:
-            #     print(self.last_camera)
+                col.label(text='Not the scene camera.', icon='RESTRICT_RENDER_ON')
             col.label(text=text, icon=icon)
             col.alert = 0
 
@@ -549,6 +544,16 @@ class CAMERA_PT_exposure_settings(Panel):
         col.prop(exps, 'show_advanced', toggle=True)
 
         if exps.show_advanced:
+            b1 = col.box()
+            b1.label(text='Camera Exposure Settings:')
+            b1.prop(exps, 'step_size')
+            b2 = b1.box()
+            b2.scale_y = 0.5
+            b2.label(text='Note: common   values   for  camera', icon='INFO')
+            b2.label(text='             settings  don\'t  always  match')
+            b2.label(text='             mathematically correct values.')
+            b2.label(text='        (e.g., `f/22` = √512 ≈ f/22.63)', icon='FORWARD')
+
             box = col.box()
             if not_active_camera:
                 box.enabled = 0
@@ -560,13 +565,6 @@ class CAMERA_PT_exposure_settings(Panel):
             box.prop(context.scene.render, 'motion_blur_shutter', text='Motion Blur Shutter')
             if context.scene.cycles:
                 box.prop(context.scene.cycles, 'film_exposure', text='Film Exposure')
-            box.separator()
-            b2 = box.box()
-            b2.scale_y = 0.5
-            b2.label(text='Note: common   values   for  camera', icon='INFO')
-            b2.label(text='             settings  don\'t  always  match')
-            b2.label(text='             mathematically correct values.')
-            b2.label(text='        (e.g., `f/22` = √512 ≈ f/22.63)', icon='FORWARD')
 
 def register():
     # bpy.utils.register_class(CameraExposureSettings)

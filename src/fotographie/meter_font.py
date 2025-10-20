@@ -97,28 +97,8 @@ def drawText(panel):
         blf.color(FONT_ID, *TEXT_COLOR)
         blf.draw(FONT_ID, str(frac))
 
-class TEXT_PT_simple(bpy.types.Panel):
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = '.Light Meter'
-    bl_label = 'Display'
-
-    def draw(self, context):
-        row = self.layout.column()
-        for attr in [
-            'bl_context',
-            # 'bl_description',
-            'bl_idname', 'bl_options',
-            'bl_order', 'bl_owner_id', 'bl_parent_id', 'bl_ui_units_x'
-        ]:
-            row.label(text=f'{attr}: {getattr(self, attr)}')
-        # print(self.text)
-        # print()
-
 REGION_TYPE = 'UI'
 def register():
-    # bpy.utils.register_class(TEXT_PT_simple)
-
     dha = bpy.types.SpaceView3D.draw_handler_add
     font_info['handler'] = dha(drawText, (LIGHTMETER_PT,), REGION_TYPE, 'POST_PIXEL')
     print(f'[ADDING]: draw handler: ({drawText.__name__}({LIGHTMETER_PT}); {REGION_TYPE})')
@@ -131,8 +111,6 @@ def unregister():
         font_info['handler'] = None
     else:
         print(f'CANNOT REMOVE! {font_info=}')
-
-    # bpy.utils.unregister_class(TEXT_PT_simple)
 
 if __name__ == '__main__':
     register()

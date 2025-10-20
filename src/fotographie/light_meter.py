@@ -13,9 +13,9 @@ from math import *
 # from .main import generateApertures, generateShutterSpeeds, generateISOSpeeds, \
 #     apertureFromExponent, \
 #     CameraExposureSettings
-from .main import *
+from .camera import *
 
-BL_CATEGORY = 'Super Light Meter'
+BL_CATEGORY = 'SuperMeter'
 
 LAYOUT_PADDING_PIXELS = {
     'LAYOUT_BOX': -1,
@@ -815,8 +815,6 @@ def setPanelMeasuring(panel, is_measuring=1):
     return state
 
 def register():
-    # ensureUniquePanelIdname()
-    panel_id = hex(id(LIGHTMETER_PT_main_panel))
     bpy.types.WindowManager.light_meter_panels = \
         bpy.props.CollectionProperty(type=LightMeterPanelState)
     bpy.types.Scene.light_meter = bpy.props.PointerProperty(type=LightMeterProperties)
