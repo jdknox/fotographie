@@ -305,6 +305,14 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     panel = 0
+    meter_ref = None
+    cam_data = None
+    renderCompleteHandler = None
+    renderCancelHandler = None
+    renderTimer = None
+    renderCompleted = 0
+    renderCancelled = 0
+
     def invoke(self, context, event):
         self.panel = LIGHTMETER_PT_main_panel
         region = 0
@@ -313,11 +321,11 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
                 region = r
         # x, y = getMeasureButtonPos(region)
         state = setPanelMeasuring(self.panel)
-        bpy.app.timers.register(lambda: self.execute(context), first_interval=0.1)
+        bpy.app.timers.register(lambda: self.exec(context), first_interval=0.1)
         # res = self.execute(context)
         return {'FINISHED'}
 
-    def execute(self, context):
+    def exec(self, context):
         scene = context.scene
         meter = scene.light_meter
 
@@ -348,37 +356,83 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
         temp_scene = scene.copy()
         temp_scene.name = f'.lightmeter_{hex(id(temp_scene))}'
 
+        # Configure render settings on the copied scene
+        temp_scene.use_nodes = 1
+        temp_scene.camera = cam_obj
+        temp_scene.cycles.samples = meter.sample_count
+        temp_scene.cycles.film_exposure = 1.0
+        temp_scene.render.resolution_x = meter.resolution
+        temp_scene.render.resolution_y = meter.resolution
+        temp_scene.render.resolution_percentage = 100
+
+        self.temp_scene = temp_scene
+        self.meter_ref = meter
+        self.cam_data = cam_data
+        self.renderCompleted = 0
+        self.renderCancelled = 0
+
+        def handleRenderComplete(result_scene):
+            if result_scene == temp_scene:
+                self.renderCompleted = 1
+                self.renderCancelled = 0
+
+        def handleRenderCancel(result_scene):
+            if result_scene == temp_scene:
+                self.renderCancelled = 1
+
+        self.renderCompleteHandler = handleRenderComplete
+        self.renderCancelHandler = handleRenderCancel
+        bpy.app.handlers.render_complete.append(handleRenderComplete)
+        bpy.app.handlers.render_cancel.append(handleRenderCancel)
+
         try:
-            # Configure render settings
-            temp_scene.camera = cam_obj
-            temp_scene.cycles.samples = meter.sample_count
-            temp_scene.cycles.film_exposure = 1.0
-            temp_scene.render.resolution_x = meter.resolution
-            temp_scene.render.resolution_y = meter.resolution
-            temp_scene.render.resolution_percentage = 100
+            bpy.ops.render.render('INVOKE_DEFAULT', scene=temp_scene.name, write_still=False)
+        except Exception:
+            self.finishMeasure(temp_scene, False)
+            raise
 
-            # Render
-            bpy.ops.render.render(scene=temp_scene.name, write_still=False)
+        def awaitRender():
+            if self.temp_scene != temp_scene:
+                return None
+            if bpy.app.is_job_running('RENDER'):
+                return 0.1
+            is_success = self.renderCancelled == 0
+            self.finishMeasure(temp_scene, is_success)
+            return None
 
-            # Get measurement
-            if 'Viewer Node' in bpy.data.images:
-                img = bpy.data.images['Viewer Node']
-                E_rgb = measureIlluminance(img, cam_data)
-                E = sum(E_rgb)
+        self.renderTimer = awaitRender
+        bpy.app.timers.register(awaitRender, first_interval=0.1)
 
-                # Store results
-                meter.illuminance = E
-                meter.illuminance_rgb = E_rgb
+        return None
 
-                # Calculate EV
-                ES100_C = E*100/meter.calibration_constant
-                meter.ev_value = log2(ES100_C) if ES100_C > 0 else -10
+    def finishMeasure(self, result_scene, is_success):
+        h = bpy.app.handlers
+        removeIf(h.render_complete, self.renderCompleteHandler)
+        removeIf(h.render_cancel, self.renderCancelHandler)
+        if not self.temp_scene:
+            return
 
+        try:
+            if is_success and self.meter_ref and self.cam_data:
+                if 'Viewer Node' in bpy.data.images:
+                    img = bpy.data.images['Viewer Node']
+                    E_rgb = measureIlluminance(img, self.cam_data)
+                    E = sum(E_rgb)
+                    self.meter_ref.illuminance = E
+                    self.meter_ref.illuminance_rgb = E_rgb
+                    ES100_C = E*100/self.meter_ref.calibration_constant
+                    self.meter_ref.ev_value = log2(ES100_C) if ES100_C > 0 else -10
         finally:
-            bpy.data.scenes.remove(temp_scene)
-            state = setPanelMeasuring(self.panel, 0)
-
-        return {'FINISHED'}
+            removeIf(bpy.data.scenes, self.temp_scene)
+            setPanelMeasuring(self.panel, 0)
+            self.temp_scene = None
+            self.meter_ref = None
+            self.cam_data = None
+            self.renderCompleteHandler = None
+            self.renderCancelHandler = None
+            self.renderTimer = None
+            self.renderCompleted = 0
+            self.renderCancelled = 0
 
 # ============= UI PANEL =============
 
@@ -622,7 +676,7 @@ class LightMeterProperties(bpy.types.PropertyGroup):
     resolution: IntProperty(
         name='Resolution',
         description='Measurement resolution (higher = more accurate)',
-        default=2048,
+        default=512,
         min=128,
         max=8192
     ) # type: ignore
@@ -630,7 +684,7 @@ class LightMeterProperties(bpy.types.PropertyGroup):
     sample_count: IntProperty(
         name='Samples',
         description='Render samples for measurement',
-        default=16,
+        default=8,
         min=1,
         max=4096
     ) # type: ignore

@@ -85,6 +85,18 @@ def dprint(*args, **kwargs):
     return
     print(*args, **kwargs)
 
+def removeIf(L:list, E):
+    result = 0
+    exists = 0
+    if type(L) is bpy.types.bpy_prop_collection:
+        exists = L.find(E.name)
+    else:
+        exists = E in L
+    if exists:
+        L.remove(E)
+        result = 1
+    return result
+
 def snapRenard(denom, use_exceptions=1):
     if denom <= 0: return 0
     l = log10(denom)
@@ -477,7 +489,7 @@ class CAMERA_PT_exposure_settings(Panel):
     def poll(cls, context):
         scene = context.scene
         if scene.camera != cls.last_camera:
-            print('DIFFERENT!')
+            # print('DIFFERENT!')
             cls.last_camera = scene.camera
             if scene.camera.data == context.camera:
                 ctx = Struct(camera=context.camera, scene=scene)
