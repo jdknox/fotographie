@@ -89,12 +89,18 @@ def removeIf(L:list, E):
     result = 0
     exists = 0
     if type(L) is bpy.types.bpy_prop_collection:
-        exists = L.find(E.name)
+        idx = L.find(E.name)
+        exists = idx >= 0
+        bpy.app.timers.register(lambda: L.remove(E), first_interval=1.0)
+        return -1
     else:
         exists = E in L
+
     if exists:
         L.remove(E)
         result = 1
+    else:
+        print(f'  {E} not found in {L}')
     return result
 
 def snapRenard(denom, use_exceptions=1):
@@ -535,7 +541,8 @@ class CAMERA_PT_exposure_settings(Panel):
         row = col.row()
         row.prop(exps, 'ev_adjustment', text='EC')
 
-        not_active_camera = context.scene.camera.data != camera_data
+        scene_cam = context.scene.camera
+        wrong_camera = not (scene_cam and (scene_cam.data == camera_data))
         # Show current film exposure value
         if context.scene.cycles:
             col.separator()
@@ -544,7 +551,7 @@ class CAMERA_PT_exposure_settings(Panel):
             ev_display =  8.44361 - log2(exposure_val) if exposure_val > 0 else 0
             text = f'Scene Film Exposure: {ev_display:+.1f} EV ({exposure_val:.2e})'
             icon = 'FILE_MOVIE'
-            if not_active_camera:
+            if wrong_camera:
                 col.alert = 1
                 icon = 'UNLINKED'
                 col.label(text='Not the scene camera.', icon='RESTRICT_RENDER_ON')
@@ -567,7 +574,7 @@ class CAMERA_PT_exposure_settings(Panel):
             b2.label(text='        (e.g., `f/22` = √512 ≈ f/22.63)', icon='FORWARD')
 
             box = col.box()
-            if not_active_camera:
+            if wrong_camera:
                 box.enabled = 0
                 box.alert = 1
                 box.label(text='Not Active Scene Camera')

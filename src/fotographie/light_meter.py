@@ -16,6 +16,7 @@ from math import *
 from .camera import *
 
 BL_CATEGORY = 'SuperMeter'
+LIGHT_METER_TRACK_TO = 'Track To'
 
 LAYOUT_PADDING_PIXELS = {
     'LAYOUT_BOX': -1,
@@ -267,6 +268,72 @@ def calcMeasuredFromEV(meter):
     S_meas = max(3, min(409600, S_meas))
     return ('ISO', f'{int(round(S_meas))}')
 
+def handleRenderFinished(scene, is_cancelled=0):
+    orig_scene = scene.get(BL_CATEGORY)
+    if not orig_scene:
+        return
+
+    meter = orig_scene.light_meter
+    cam_obj = bpy.data.objects.get('.LightMeterCamera')
+    cam_data = cam_obj.data if cam_obj else 0
+
+    if not is_cancelled and meter and cam_data:
+        img = bpy.data.images.get('Viewer Node')
+        if img:
+            E_rgb = measureIlluminance(img, cam_data)
+            meter.illuminance = sum(E_rgb)
+            meter.illuminance_rgb = E_rgb
+            ES100_C = meter.illuminance*100/meter.calibration_constant
+            meter.ev_value = log2(ES100_C) if ES100_C > 0 else -10
+
+    setPanelMeasuring(LIGHTMETER_PT_main_panel, 0)
+    removeIf(bpy.data.scenes, scene)
+
+def handleRenderComplete(scene):
+    handleRenderFinished(scene, 0)
+
+def handleRenderCancel(scene):
+    handleRenderFinished(scene, 1)
+
+def ensureMeterCamera(context):
+    scene = context.scene
+    meter:LightMeterProperties = scene.light_meter
+
+    # Create or get dome camera
+    cam_name = '.LightMeterCamera'
+    if cam_name not in bpy.data.objects:
+        cam_data = bpy.data.cameras.new(name=cam_name)
+        cam_data.display_size = 0.0625
+        cam_data.clip_end = 1000.0
+        cam_data.clip_start = 0.01171875
+
+        cam_obj = bpy.data.objects.new(name=cam_name, object_data=cam_data)
+
+        # Track to active camera
+        active_cam = scene.camera
+        cns = cam_obj.constraints.new(type='TRACK_TO')
+        cns.name = LIGHT_METER_TRACK_TO
+        if active_cam:
+            cns.target = active_cam
+    else:
+        cam_obj = bpy.data.objects[cam_name]
+
+    if not cam_obj.users_scene:
+        scene.collection.objects.link(cam_obj)
+        cam_obj.location = scene.cursor.location
+        cam_obj.rotation_euler = (pi/2, 0, 0)  # Point forward
+    meter.lightmeter_cam = cam_obj
+
+    cam_data = cam_obj.data
+    cam_data.type = 'PANO'
+    cam_data.panorama_type = 'EQUIRECTANGULAR'
+    cam_data.latitude_min = -pi/2
+    cam_data.latitude_max = pi/2
+    half_a = meter.dome_fov/2
+    cam_data.longitude_min = -half_a*pi/180
+    cam_data.longitude_max = -cam_data.longitude_min
+
+    return cam_obj
 
 # ============= OPERATORS =============
 class LIGHTMETER_OT_step_enum(bpy.types.Operator):
@@ -298,6 +365,72 @@ class LIGHTMETER_OT_step_enum(bpy.types.Operator):
         setattr(exps, self.prop_name, identifiers[idx_cur])
         return {'FINISHED'}
 
+class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
+    bl_idname = 'lightmeter.apply_to_camera'
+    bl_label = 'Apply Meter To Camera'
+    bl_description = 'Set Camera exposure settings to match meter'
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context.scene, 'camera', 0)
+
+    def execute(self, context):
+        scene = context.scene
+        cam_obj = scene.camera
+        if not cam_obj:
+            self.report({'WARNING'}, 'No active camera')
+            return {'CANCELLED'}
+
+        meter = scene.light_meter
+        if not meter:
+            self.report({'WARNING'}, 'Light meter state missing')
+            return {'CANCELLED'}
+
+        src = meter.exposure_settings
+        dst = cam_obj.data.exposure_settings
+        attrs = [
+            'step_size',
+            'aperture_index', 'aperture_preset',
+            'shutter_index', 'shutter_preset',
+            'iso_index', 'iso_preset',
+            'ev_adjustment', 'comp_dir',
+        ]
+
+        for attr in attrs:
+            setattr(dst, attr, getattr(src, attr))
+
+        measured = calcMeasuredFromEV(meter)
+        steps = int(meter.exposure_settings.step_size)
+        M = MAX_STEPS//steps
+        print(measured.ev_value, measured.ev_value*steps, int(measured.ev_value*steps))
+        preset = floor(measured.ev_value*steps)*M
+        print(preset)
+        if meter.mode == 'F':
+            dst.shutter_preset = f'{preset}'
+            dst.shutter_index = preset
+        elif meter.mode == 'T':
+            dst.aperture_preset = f'{preset}'
+            dst.aperture_index = preset
+
+        ctx = Struct(scene=scene, camera=cam_obj.data)
+        updateExposure(dst, ctx)
+        self.report({'INFO'}, 'Meter settings applied to active camera')
+        return {'FINISHED'}
+
+class LIGHTMETER_OT_ensure_helper(bpy.types.Operator):
+    bl_idname = 'lightmeter.ensure_helper'
+    bl_label = 'Create Meter Camera'
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        cam = ensureMeterCamera(context)
+        if cam:
+            self.report({'INFO'}, 'Meter camera ready')
+        else:
+            self.report({'WARNING'}, 'Unable to create meter camera')
+        return {'FINISHED'}
+
 class LIGHTMETER_OT_measure(bpy.types.Operator):
     '''Measure incident light at 3D cursor position'''
     bl_idname = 'lightmeter.measure'
@@ -305,13 +438,6 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     panel = 0
-    meter_ref = None
-    cam_data = None
-    renderCompleteHandler = None
-    renderCancelHandler = None
-    renderTimer = None
-    renderCompleted = 0
-    renderCancelled = 0
 
     def invoke(self, context, event):
         self.panel = LIGHTMETER_PT_main_panel
@@ -322,117 +448,85 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
         # x, y = getMeasureButtonPos(region)
         state = setPanelMeasuring(self.panel)
         bpy.app.timers.register(lambda: self.exec(context), first_interval=0.1)
-        # res = self.execute(context)
         return {'FINISHED'}
 
     def exec(self, context):
         scene = context.scene
-        meter = scene.light_meter
-
-        # Create or get dome camera
-        cam_name = '.LightMeterCamera'
-        if cam_name not in bpy.data.objects:
-            cam_data = bpy.data.cameras.new(name=cam_name)
-            cam_data.display_size = 0.0625
-            cam_obj = bpy.data.objects.new(name=cam_name, object_data=cam_data)
-            context.collection.objects.link(cam_obj)
-            # Position camera at 3D cursor
-            cam_obj.location = scene.cursor.location
-            cam_obj.rotation_euler = (pi/2, 0, 0)  # Point forward
-        else:
-            cam_obj = bpy.data.objects[cam_name]
-        cam_data = cam_obj.data
-        cam_data.type = 'PANO'
-        cam_data.panorama_type = 'EQUIRECTANGULAR'
-        cam_data.clip_end = 1000.0
-        cam_data.clip_start = 0.01171875
-        cam_data.latitude_min = -pi/2
-        cam_data.latitude_max = pi/2
-        half_a = meter.dome_fov/2
-        cam_data.longitude_min = -half_a*pi/180
-        cam_data.longitude_max = -cam_data.longitude_min
+        meter:LightMeterProperties = scene.light_meter
 
         # Create temp scene for rendering
         temp_scene = scene.copy()
         temp_scene.name = f'.lightmeter_{hex(id(temp_scene))}'
 
-        # Configure render settings on the copied scene
-        temp_scene.use_nodes = 1
-        temp_scene.camera = cam_obj
-        temp_scene.cycles.samples = meter.sample_count
-        temp_scene.cycles.film_exposure = 1.0
-        temp_scene.render.resolution_x = meter.resolution
-        temp_scene.render.resolution_y = meter.resolution
-        temp_scene.render.resolution_percentage = 100
-
-        self.temp_scene = temp_scene
-        self.meter_ref = meter
-        self.cam_data = cam_data
-        self.renderCompleted = 0
-        self.renderCancelled = 0
-
-        def handleRenderComplete(result_scene):
-            if result_scene == temp_scene:
-                self.renderCompleted = 1
-                self.renderCancelled = 0
-
-        def handleRenderCancel(result_scene):
-            if result_scene == temp_scene:
-                self.renderCancelled = 1
-
-        self.renderCompleteHandler = handleRenderComplete
-        self.renderCancelHandler = handleRenderCancel
-        bpy.app.handlers.render_complete.append(handleRenderComplete)
-        bpy.app.handlers.render_cancel.append(handleRenderCancel)
-
         try:
-            bpy.ops.render.render('INVOKE_DEFAULT', scene=temp_scene.name, write_still=False)
-        except Exception:
-            self.finishMeasure(temp_scene, False)
-            raise
+            # Configure render settings
+            temp_scene.camera = ensureMeterCamera(context)
+            temp_scene.cycles.samples = meter.sample_count
+            temp_scene.cycles.film_exposure = 1.0
+            temp_scene.render.resolution_x = meter.resolution
+            temp_scene.render.resolution_y = meter.resolution
+            temp_scene.render.resolution_percentage = 100
+            temp_scene[BL_CATEGORY] = scene
 
-        def awaitRender():
-            if self.temp_scene != temp_scene:
-                return None
-            if bpy.app.is_job_running('RENDER'):
-                return 0.1
-            is_success = self.renderCancelled == 0
-            self.finishMeasure(temp_scene, is_success)
-            return None
-
-        self.renderTimer = awaitRender
-        bpy.app.timers.register(awaitRender, first_interval=0.1)
+            # Render
+            temp_scene.update_render_engine()
+            bpy.ops.wm.redraw_timer(type='DRAW_WIN', iterations=1)
+            for area in bpy.context.screen.areas:
+                area.tag_redraw()
+            temp_scene.render.use_lock_interface = 1
+            bpy.ops.render.render('INVOKE_DEFAULT',
+                                  scene=temp_scene.name, write_still=0, use_viewport=0)
+        finally:
+            pass
 
         return None
 
-    def finishMeasure(self, result_scene, is_success):
-        h = bpy.app.handlers
-        removeIf(h.render_complete, self.renderCompleteHandler)
-        removeIf(h.render_cancel, self.renderCancelHandler)
-        if not self.temp_scene:
-            return
+def getCameraItems(meter:'LightMeterProperties', context):
+    items = []
+    target_cam_enum = meter.get('target_camera')
+    constraint = getConstraint(meter)
 
-        try:
-            if is_success and self.meter_ref and self.cam_data:
-                if 'Viewer Node' in bpy.data.images:
-                    img = bpy.data.images['Viewer Node']
-                    E_rgb = measureIlluminance(img, self.cam_data)
-                    E = sum(E_rgb)
-                    self.meter_ref.illuminance = E
-                    self.meter_ref.illuminance_rgb = E_rgb
-                    ES100_C = E*100/self.meter_ref.calibration_constant
-                    self.meter_ref.ev_value = log2(ES100_C) if ES100_C > 0 else -10
-        finally:
-            removeIf(bpy.data.scenes, self.temp_scene)
-            setPanelMeasuring(self.panel, 0)
-            self.temp_scene = None
-            self.meter_ref = None
-            self.cam_data = None
-            self.renderCompleteHandler = None
-            self.renderCancelHandler = None
-            self.renderTimer = None
-            self.renderCompleted = 0
-            self.renderCancelled = 0
+    target = 0
+    for obj in context.scene.objects:
+        if (obj.type == 'CAMERA') and (obj != meter.lightmeter_cam):
+            items.append((obj.name, obj.name, obj.data.name))
+        elif constraint.target and constraint.target.name == obj.name:
+            target = 'N/A'
+
+    if not constraint.target:
+        items.append(('NONE', '', ''))
+    elif target == 'N/A':
+        items.append(('N/A', 'Other', ''))
+
+    return items if len(items) > 0 else [('NONE', 'No Cameras', '')]
+
+def getConstraint(meter):
+    cam_obj = meter.lightmeter_cam
+    if not cam_obj: return 0
+    constraint = cam_obj.constraints.get(LIGHT_METER_TRACK_TO)
+    return constraint if constraint else 0
+
+def updateTargetCamera_(meter, context):
+    updateTargetCamera(meter, context)
+
+def updateTargetCamera(meter:'LightMeterProperties', context, update_enum=0):
+    constraint = getConstraint(meter)
+    if not constraint: return
+
+    if update_enum and meter.use_camera_list:
+        target = constraint.target
+        name = 'NONE'
+        if target:
+            if context.scene.objects[target.name].type == 'CAMERA':
+                name = target.name
+            else:
+                name = 'N/A'
+
+        meter.target_camera = name
+    else:
+        new_target = bpy.data.objects.get(meter.target_camera)
+        if constraint and new_target:
+            constraint.target = new_target
 
 # ============= UI PANEL =============
 
@@ -444,15 +538,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = BL_CATEGORY
     bl_order = -1
-    # bl_category = 'Text'
     bl_hash = id(bl_idname)
-
-    # def __init__(self, clas):
-    #     super().__init__(clas)
-    #     layout = self.layout
-    #     print( '  I###', self.bl_category)
-    #     print(f'   I## {layout.activate_init=}; {layout.active=}; {layout.enabled=}')
-    #     # layout.enabled = 0
 
     def draw_header(self, context):
         markPanelState(type(self), 0)
@@ -462,7 +548,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        meter = context.scene.light_meter
+        meter:LightMeterProperties = context.scene.light_meter
         markPanelState(type(self), 1)
 
         # === Settings bar (T/F/ISO) ===
@@ -539,6 +625,12 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         else:
             display_type = 'ISO'
 
+        create = layout.row()
+        create.alignment = 'RIGHT'
+        cam_obj = meter.lightmeter_cam
+        if not (cam_obj and cam_obj.users_scene):
+            create.operator('lightmeter.ensure_helper', text='Create Light Meter', icon='STRIP_COLOR_01')
+
         # === Big readout (measured value) ===
         disp = layout.split(factor=0.89)
         big = disp.box()
@@ -560,6 +652,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         measure = disp.row(align=1)
         state = getPanelState(LIGHTMETER_PT_main_panel)
         measuring = state.measuring
+        # measure.enabled = 0
 
         button = measure.column(align=1)
         button.alignment = 'EXPAND'
@@ -581,6 +674,36 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         button.scale_x = 0.5
         button.operator('lightmeter.measure',
                          text='', emboss=1, depress=measuring)
+
+
+        meter_cam = meter.lightmeter_cam or bpy.data.objects.get('.LightMeterCamera')
+        track = meter_cam.constraints.get(LIGHT_METER_TRACK_TO) if meter_cam else None
+
+        cam_col = layout.box()
+        cam_col.use_property_split = 1
+        cam_col.use_property_decorate = 0
+
+        button_row = cam_col.row(align=0)
+        # button_row.alignment = 'RIGHT'
+        button_row.label(text='Send to Scene Camera')
+        camera_name = context.scene.camera.name if context.scene.camera else 0
+        if camera_name:
+            button_row.operator('lightmeter.apply_to_camera',
+                                text=camera_name, icon='FILE_ALIAS')
+        else:
+            button_row.alert = 1
+            button_row.label(text='No Scene Camera!', icon='NOT_FOUND')
+
+        target_row = cam_col.row(align=1)
+        if track:
+            if meter.use_camera_list:
+                target_row.prop(meter, 'target_camera', icon='CAMERA_DATA', text='Target')
+            else:
+                target_row.prop(track, 'target', text='Target')  # shows search + eyedropper
+            target_row.prop(meter, 'use_camera_list', text='', toggle=1, icon='CAMERA_DATA')
+        else:
+            cam_name = 'None! Light meter requires a tracking constraint.'
+            target_row.label(text=f'Target: {cam_name}', icon='PIVOT_CURSOR')
 
         # === Analog scale (-3 to +3 EV) ===
         # scale_box = layout.box()
@@ -724,6 +847,18 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         default=True
     ) # type: ignore
 
+    target_camera: EnumProperty(
+        name='Target Camera',
+        items=getCameraItems,
+        update=updateTargetCamera_
+    ) # type:ignore
+    lightmeter_cam: PointerProperty(type=bpy.types.Object) # type:ignore
+
+    use_camera_list: BoolProperty(
+        name='Filter Cameras Only',
+        update=lambda meter, context: updateTargetCamera(meter, context, 1),
+    ) # type:ignore
+
 class LightMeterPanelState(bpy.types.PropertyGroup):
     panel_category: StringProperty(default='') #type:ignore
     is_open: BoolProperty(default=False) #type:ignore
@@ -834,7 +969,9 @@ class LIGHTMETER_PT_iso_menu(bpy.types.Panel):
 classes = [
     LightMeterPanelState,
     LightMeterProperties,
+    LIGHTMETER_OT_ensure_helper,
     LIGHTMETER_OT_measure,
+    LIGHTMETER_OT_apply_to_camera,
     LIGHTMETER_OT_step_enum,
     LIGHTMETER_PT_main_panel,
 ]
@@ -868,11 +1005,17 @@ def setPanelMeasuring(panel, is_measuring=1):
     state.measuring = is_measuring
     return state
 
+bl_handlers = bpy.app.handlers
 def register():
+    bl_handlers.render_complete.append(handleRenderComplete)
+    bl_handlers.render_cancel.append(handleRenderCancel)
+
     bpy.types.WindowManager.light_meter_panels = \
         bpy.props.CollectionProperty(type=LightMeterPanelState)
     bpy.types.Scene.light_meter = bpy.props.PointerProperty(type=LightMeterProperties)
 
 def unregister():
+    removeIf(bl_handlers.render_complete, handleRenderComplete)
+    removeIf(bl_handlers.render_cancel, handleRenderCancel)
     del bpy.types.WindowManager.light_meter_panels
     del bpy.types.Scene.light_meter
