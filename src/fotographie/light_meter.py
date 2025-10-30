@@ -418,6 +418,43 @@ class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
         self.report({'INFO'}, 'Meter settings applied to active camera')
         return {'FINISHED'}
 
+class LIGHTMETER_OT_focus_scene_camera(bpy.types.Operator):
+    bl_idname = 'lightmeter.focus_scene_camera'
+    bl_label = 'View Scene Camera'
+    bl_description = 'Select the scene camera and show its data tab in the Properties editor'
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        scene = context.scene
+        cam_obj = scene.camera
+        if not cam_obj:
+            self.report({'WARNING'}, 'No scene camera')
+            return {'CANCELLED'}
+
+        view_layer = context.view_layer
+        for obj in view_layer.objects:
+            obj.select_set(obj == cam_obj)
+        view_layer.objects.active = cam_obj
+
+        for area in context.window.screen.areas:
+            if area.type != 'PROPERTIES':
+                continue
+            space = area.spaces.active
+            if space.type != 'PROPERTIES':
+                continue
+            region = None
+            for reg in area.regions:
+                if reg.type == 'WINDOW':
+                    region = reg
+                    break
+            if not region:
+                continue
+            with context.temp_override(window=context.window, area=area, region=region):
+                bpy.ops.wm.context_set_enum(data_path='space_data.context', value='DATA')
+            break
+
+        return {'FINISHED'}
+
 class LIGHTMETER_OT_ensure_helper(bpy.types.Operator):
     bl_idname = 'lightmeter.ensure_helper'
     bl_label = 'Create Meter Camera'
@@ -683,23 +720,34 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         cam_col.use_property_split = 1
         cam_col.use_property_decorate = 0
 
-        button_row = cam_col.row(align=0)
-        # button_row.alignment = 'RIGHT'
-        button_row.label(text='Send to Scene Camera')
+        button_row = cam_col.split(factor=0.4)#row(align=1)
+        button_row.alignment = 'RIGHT'
+        button_row.use_property_split = 1
+        button_row.label(text='Send Exposure')
         camera_name = context.scene.camera.name if context.scene.camera else 0
         if camera_name:
-            button_row.operator('lightmeter.apply_to_camera',
+            bb = button_row.box().split(factor=0.8)
+            bb.operator('lightmeter.apply_to_camera',
                                 text=camera_name, icon='FILE_ALIAS')
+            bb.operator('lightmeter.focus_scene_camera',
+                             icon='PROPERTIES', text='')
+            panel = Struct(
+                layout=cam_col,
+                is_in_meter=1
+            )
+            CAMERA_PT_exposure_settings.draw(panel, context)
+
         else:
             button_row.alert = 1
             button_row.label(text='No Scene Camera!', icon='NOT_FOUND')
 
+        cam_col.separator(type='LINE')
         target_row = cam_col.row(align=1)
         if track:
             if meter.use_camera_list:
-                target_row.prop(meter, 'target_camera', icon='CAMERA_DATA', text='Target')
+                target_row.prop(meter, 'target_camera', icon='NONE', text='Aim at')
             else:
-                target_row.prop(track, 'target', text='Target')  # shows search + eyedropper
+                target_row.prop(track, 'target', text='Aim at')  # shows search + eyedropper
             target_row.prop(meter, 'use_camera_list', text='', toggle=1, icon='CAMERA_DATA')
         else:
             cam_name = 'None! Light meter requires a tracking constraint.'

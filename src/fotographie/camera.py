@@ -497,7 +497,7 @@ class CAMERA_PT_exposure_settings(Panel):
         if scene.camera != cls.last_camera:
             # print('DIFFERENT!')
             cls.last_camera = scene.camera
-            if scene.camera.data == context.camera:
+            if scene.camera and (scene.camera.data == context.camera):
                 ctx = Struct(camera=context.camera, scene=scene)
                 bpy.app.timers.register(
                     lambda: updateExposure(None, ctx)
@@ -509,10 +509,12 @@ class CAMERA_PT_exposure_settings(Panel):
         layout = self.layout
         layout.label(text='', icon='CAMERA_DATA')
 
-    def draw(self, context):
-        global window_start
-        layout = self.layout
-        camera_data = context.camera
+    def draw(panel, context):
+        layout = panel.layout
+        scene_cam = context.scene.camera
+        scene_cam_data = getattr(scene_cam, 'data', None)
+        camera_data = getattr(context, 'camera', scene_cam_data)
+        is_meter = getattr(panel, 'is_in_meter', 0)
         exps:CameraExposureSettings = camera_data.exposure_settings
 
         layout.use_property_split = 1
@@ -536,54 +538,55 @@ class CAMERA_PT_exposure_settings(Panel):
         row.prop_with_menu(exps, 'iso_preset', text='ISO Speed',
                            menu='EXPOSURE_MT_iso_menu')
 
-        # EV adjustment
-        col.separator()
-        row = col.row()
-        row.prop(exps, 'ev_adjustment', text='EC')
-
-        scene_cam = context.scene.camera
-        wrong_camera = not (scene_cam and (scene_cam.data == camera_data))
-        # Show current film exposure value
-        if context.scene.cycles:
+        if not is_meter:
+            # EV adjustment
             col.separator()
-            exposure_val = context.scene.cycles.film_exposure
-            # 9.26 - log2...
-            ev_display =  8.44361 - log2(exposure_val) if exposure_val > 0 else 0
-            text = f'Scene Film Exposure: {ev_display:+.1f} EV ({exposure_val:.2e})'
-            icon = 'FILE_MOVIE'
-            if wrong_camera:
-                col.alert = 1
-                icon = 'UNLINKED'
-                col.label(text='Not the scene camera.', icon='RESTRICT_RENDER_ON')
-            col.label(text=text, icon=icon)
-            col.alert = 0
+            row = col.row()
+            row.prop(exps, 'ev_adjustment', text='EC')
 
-        # Advanced toggle
-        col.separator()
-        col.prop(exps, 'show_advanced', toggle=True)
-
-        if exps.show_advanced:
-            b1 = col.box()
-            b1.label(text='Camera Exposure Settings:')
-            b1.prop(exps, 'step_size')
-            b2 = b1.box()
-            b2.scale_y = 0.5
-            b2.label(text='Note: common   values   for  camera', icon='INFO')
-            b2.label(text='             settings  don\'t  always  match')
-            b2.label(text='             mathematically correct values.')
-            b2.label(text='        (e.g., `f/22` = √512 ≈ f/22.63)', icon='FORWARD')
-
-            box = col.box()
-            if wrong_camera:
-                box.enabled = 0
-                box.alert = 1
-                box.label(text='Not Active Scene Camera')
-                box.alert = 0
-            box.label(text='Scene Exposure Settings:')
-            box.prop(camera_data.dof, 'aperture_fstop', text='DOF F-Stop')
-            box.prop(context.scene.render, 'motion_blur_shutter', text='Motion Blur Shutter')
+            scene_cam = context.scene.camera
+            wrong_camera = not (scene_cam and (scene_cam.data == camera_data))
+            # Show current film exposure value
             if context.scene.cycles:
-                box.prop(context.scene.cycles, 'film_exposure', text='Film Exposure')
+                col.separator()
+                exposure_val = context.scene.cycles.film_exposure
+                # 9.26 - log2...
+                ev_display =  8.44361 - log2(exposure_val) if exposure_val > 0 else 0
+                text = f'Scene Film Exposure: {ev_display:+.1f} EV ({exposure_val:.2e})'
+                icon = 'FILE_MOVIE'
+                if wrong_camera:
+                    col.alert = 1
+                    icon = 'UNLINKED'
+                    col.label(text='Not the scene camera.', icon='RESTRICT_RENDER_ON')
+                col.label(text=text, icon=icon)
+                col.alert = 0
+
+            # Advanced toggle
+            col.separator()
+            col.prop(exps, 'show_advanced', toggle=True)
+
+            if exps.show_advanced:
+                b1 = col.box()
+                b1.label(text='Camera Exposure Settings:')
+                b1.prop(exps, 'step_size')
+                b2 = b1.box()
+                b2.scale_y = 0.5
+                b2.label(text='Note: common   values   for  camera', icon='INFO')
+                b2.label(text='             settings  don\'t  always  match')
+                b2.label(text='             mathematically correct values.')
+                b2.label(text='        (e.g., `f/22` = √512 ≈ f/22.63)', icon='FORWARD')
+
+                box = col.box()
+                if wrong_camera:
+                    box.enabled = 0
+                    box.alert = 1
+                    box.label(text='Not Active Scene Camera')
+                    box.alert = 0
+                box.label(text='Scene Exposure Settings:')
+                box.prop(camera_data.dof, 'aperture_fstop', text='DOF F-Stop')
+                box.prop(context.scene.render, 'motion_blur_shutter', text='Motion Blur Shutter')
+                if context.scene.cycles:
+                    box.prop(context.scene.cycles, 'film_exposure', text='Film Exposure')
 
 def register():
     # bpy.utils.register_class(CameraExposureSettings)
