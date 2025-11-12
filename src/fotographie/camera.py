@@ -275,12 +275,11 @@ def updateExposure(self, context):
     # if meter.panel_state == PANEL_STATE.open:
     #     meter.panel_state = PANEL_STATE.closing
 
-    if not getattr(context, 'camera', 0):
-        # print('NO CAMERA')
+    camera_data = contextCameraData(context)
+    if not camera_data:
         return
 
-    dprint(f'  UPDATE_EXPOSURE: {context.camera=}')
-    camera_data = context.camera
+    dprint(f'  UPDATE_EXPOSURE: {camera_data=}')
     exps = camera_data.exposure_settings
 
     f_stop = apertureFromExponent(exps.aperture_preset)
@@ -316,13 +315,29 @@ def updateExposure(self, context):
 
     # Update camera and render settings
     camera_data.dof.aperture_fstop = f_stop
-    if context.scene.camera.data == camera_data:
+    scene_cam = context.scene.camera
+    if scene_cam and scene_cam.data == camera_data:
         context.scene.render.motion_blur_shutter = shutter_in_s
         context.scene.cycles.film_exposure = film_exposure
         dprint(f'{film_exposure=}')
     else:
         dprint(f'    {context=}\n    {context.scene=}\n{context.scene.camera=}')
         dprint(f'    {camera_data.id_data=}')
+
+def contextCameraData(context):
+    '''Return a camera datablock for contexts that lack context.camera.'''
+    cam_data = getattr(context, 'camera', None)
+    if cam_data:
+        if isinstance(cam_data, bpy.types.Object):
+            if cam_data.type == 'CAMERA':
+                cam_data = cam_data.data
+            else:
+                cam_data = None
+    if not cam_data:
+        scene = getattr(context, 'scene', None)
+        if scene and scene.camera:
+            cam_data = scene.camera.data
+    return cam_data
 
 class CameraExposureSettings(PropertyGroup):
     '''Camera exposure settings property group'''
@@ -444,7 +459,10 @@ class EXPOSURE_OT_set_preset(bpy.types.Operator):
     prop_name: bpy.props.StringProperty() #type:ignore
 
     def execute(self, context):
-        exps = context.camera.exposure_settings
+        camera_data = contextCameraData(context)
+        if not camera_data:
+            return {'CANCELLED'}
+        exps = camera_data.exposure_settings
         setattr(exps, self.prop_name, self.value)
         return {'FINISHED'}
 
@@ -456,7 +474,10 @@ class EXPOSURE_MT_shutter_menu(bpy.types.Menu):
     drawer = ExposureMenuDrawer('shutter_preset', generateShutterSpeeds)
 
     def draw(self, context):
-        exps = context.camera.exposure_settings
+        camera_data = contextCameraData(context)
+        if not camera_data:
+            return
+        exps = camera_data.exposure_settings
         self.drawer.draw(self.layout, exps)
 
 
@@ -467,7 +488,10 @@ class EXPOSURE_MT_aperture_menu(bpy.types.Menu):
     drawer = ExposureMenuDrawer('aperture_preset', generateApertures)
 
     def draw(self, context):
-        exps = context.camera.exposure_settings
+        camera_data = contextCameraData(context)
+        if not camera_data:
+            return
+        exps = camera_data.exposure_settings
         self.drawer.draw(self.layout, exps)
 
 
@@ -478,7 +502,10 @@ class EXPOSURE_MT_iso_menu(bpy.types.Menu):
     drawer = ExposureMenuDrawer('iso_preset', generateISOSpeeds)
 
     def draw(self, context):
-        exps = context.camera.exposure_settings
+        camera_data = contextCameraData(context)
+        if not camera_data:
+            return
+        exps = camera_data.exposure_settings
         self.drawer.draw(self.layout, exps)
 
 class CAMERA_PT_exposure_settings(Panel):
@@ -494,16 +521,15 @@ class CAMERA_PT_exposure_settings(Panel):
     @classmethod
     def poll(cls, context):
         scene = context.scene
+        cam_data = contextCameraData(context)
         if scene.camera != cls.last_camera:
-            # print('DIFFERENT!')
             cls.last_camera = scene.camera
-            if scene.camera and (scene.camera.data == context.camera):
-                ctx = Struct(camera=context.camera, scene=scene)
+            if scene.camera and cam_data and (scene.camera.data == cam_data):
+                ctx = Struct(camera=cam_data, scene=scene)
                 bpy.app.timers.register(
                     lambda: updateExposure(None, ctx)
                 )
-                # print(f' POLL: {ctx.camera=}\n     : {scene.camera=}')
-        return context.camera
+        return cam_data
 
     def draw_header(self, context):
         layout = self.layout
@@ -512,8 +538,11 @@ class CAMERA_PT_exposure_settings(Panel):
     def draw(panel, context):
         layout = panel.layout
         scene_cam = context.scene.camera
-        scene_cam_data = getattr(scene_cam, 'data', None)
-        camera_data = getattr(context, 'camera', scene_cam_data)
+        camera_data = contextCameraData(context)
+        if not camera_data:
+            layout.label(text='No camera available', icon='ERROR')
+            return
+        scene_cam_data = scene_cam.data if scene_cam else None
         is_meter = getattr(panel, 'is_in_meter', 0)
         exps:CameraExposureSettings = camera_data.exposure_settings
 

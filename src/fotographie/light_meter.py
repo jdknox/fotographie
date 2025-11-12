@@ -760,16 +760,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         button.operator('lightmeter.measure',
                          text='', emboss=1, depress=measuring)
 
-        if meter.background_pending:
-            col = layout.column()
-            col.label(text='Background measurement running...', icon='TIME')
-            col.progress(
-                text='Metering...',
-                factor=meter.background_progress,
-                type='BAR',
-            )
-
-
         meter_cam = meter.lightmeter_cam or bpy.data.objects.get('.LightMeterCamera')
         track = meter_cam.constraints.get(LIGHT_METER_TRACK_TO) if meter_cam else None
 
@@ -842,6 +832,16 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         text = f'Settings: ({meter.illuminance:0.1f} lx; {meter.ev_value:0.3f})'
         # text += f' (panel_state:{state_names[meter.panel_state]})'
         header.label(text=text, icon='PREFERENCES')
+
+        if meter.background_pending:
+            col = layout.column()
+            col.label(text='Background measurement running...', icon='TIME')
+            col.progress(
+                text='Metering...',
+                factor=meter.background_progress,
+                type='BAR',
+            )
+
         if not meter.show_settings:
             return
 
@@ -865,6 +865,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         settings_col.prop(meter, 'resolution')
         settings_col.prop(meter, 'sample_count')
         # settings_col.prop(meter, 'show_rgb')
+
 
 # ============= PROPERTIES =============
 class LightMeterProperties(bpy.types.PropertyGroup):
@@ -1004,7 +1005,7 @@ class LIGHTMETER_PT_aperture_menu(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        panelPoll(cls, context)
+        return panelPoll(cls, context)
 
     def draw(self, context):
         panelDraw(self, context)
