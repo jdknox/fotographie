@@ -5,7 +5,8 @@ import gpu
 from bpy.props import *
 from mathutils import *
 
-import json, time
+import time
+import os, subprocess, tempfile
 import numpy as np
 from dataclasses import dataclass as struct
 from math import *
@@ -17,6 +18,7 @@ from .camera import *
 
 BL_CATEGORY = 'SuperMeter'
 LIGHT_METER_TRACK_TO = 'Track To'
+BACKGROUND_SCRIPT = f'{os.path.dirname(__file__)}/background_runner.py'
 
 LAYOUT_PADDING_PIXELS = {
     'LAYOUT_BOX': -1,
@@ -124,51 +126,6 @@ def getDisplayPos(region, is_handler=0):
     # print(f'{pos=} (took {elapsed*1000:0.1f} ms)')
     return pos
 
-# ==========================
-def makeAngles(h, w, phi_span=pi):
-    j = np.arange(h, dtype=np.float32) + 0.5
-    i = np.arange(w, dtype=np.float32) + 0.5
-
-    # elevation ε: +pi/2 .. -pi/2 (top..bottom)
-    elev = 0.5*pi - (pi*j/h)
-    # azimuth φ: centered left..right over span
-    phi_min = -phi_span/2
-    phi_max = phi_span/2
-    azim = phi_min + (phi_max - phi_min)*i/w
-
-    return elev, azim
-
-def weightsIrradiance(h, w, phi_span=pi):
-    elev, azim = makeAngles(h, w, phi_span)
-    cos_e = np.cos(elev)
-    cos_p = np.abs(np.cos(azim))
-    # global cosine law (n·ω) = cosε*cosφ
-    cos_theta = np.outer(cos_e, cos_p)
-    # solid-angle density for equirect (ε,φ): dω = cosε dε dφ
-    d_omega = cos_e[:, None]
-    weights = cos_theta * d_omega
-
-    return weights
-
-def measureIlluminance(img, cam_data):
-    h, w = img.size
-    span = (cam_data.longitude_max - cam_data.longitude_min)
-    # span = pi
-    weights = weightsIrradiance(h, w, span)
-
-    buf = np.empty(w*h*4, dtype=np.float32)
-    img.pixels.foreach_get(buf)
-
-    px = buf.reshape(h, w, 4)[:, :, :3]  # RGB
-
-    num = np.einsum('ij,ijc->c', weights, px, dtype=np.float64)
-    den = np.sum(weights, dtype=np.float64)
-
-    CIE = np.array([0.2126, 0.7152, 0.0722])
-    E_rgb = 683*pi * num/den*CIE
-
-    return E_rgb
-
 # ===== Sekonic-style exposure helpers =====
 def getShutterMilliseconds(meter):
     ms = getShutterSeconds(meter)*1024
@@ -268,33 +225,6 @@ def calcMeasuredFromEV(meter):
     S_meas = max(3, min(409600, S_meas))
     return ('ISO', f'{int(round(S_meas))}')
 
-def handleRenderFinished(scene, is_cancelled=0):
-    orig_scene = scene.get(BL_CATEGORY)
-    if not orig_scene:
-        return
-
-    meter = orig_scene.light_meter
-    cam_obj = bpy.data.objects.get('.LightMeterCamera')
-    cam_data = cam_obj.data if cam_obj else 0
-
-    if not is_cancelled and meter and cam_data:
-        img = bpy.data.images.get('Viewer Node')
-        if img:
-            E_rgb = measureIlluminance(img, cam_data)
-            meter.illuminance = sum(E_rgb)
-            meter.illuminance_rgb = E_rgb
-            ES100_C = meter.illuminance*100/meter.calibration_constant
-            meter.ev_value = log2(ES100_C) if ES100_C > 0 else -10
-
-    setPanelMeasuring(LIGHTMETER_PT_main_panel, 0)
-    removeIf(bpy.data.scenes, scene)
-
-def handleRenderComplete(scene):
-    handleRenderFinished(scene, 0)
-
-def handleRenderCancel(scene):
-    handleRenderFinished(scene, 1)
-
 def ensureMeterCamera(context):
     scene = context.scene
     meter:LightMeterProperties = scene.light_meter
@@ -334,6 +264,157 @@ def ensureMeterCamera(context):
     cam_data.longitude_max = -cam_data.longitude_min
 
     return cam_obj
+
+def ensureBlendPath():
+    path = bpy.data.filepath
+    if path:
+        return path
+    bpy.ops.wm.save_mainfile()
+    return bpy.data.filepath
+
+def saveTempBlendCopy():
+    handle, path = tempfile.mkstemp(suffix='.blend')
+    os.close(handle)
+    bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+    return path
+
+def startBackgroundMeasurement(context, panel):
+    scene = context.scene
+    meter = scene.light_meter
+    if meter.background_pending:
+        return 0
+    if not ensureBlendPath():
+        return 0
+    temp_blend = saveTempBlendCopy()
+    binary = bpy.app.binary_path
+    if not binary:
+        os.remove(temp_blend)
+        return 0
+    cmd = [binary,
+           '--background', temp_blend,
+        #    '--addons', 'fotographie',
+           '--python-expr', 'TEMPDIR = "parent/tempdir"',
+           '--python', BACKGROUND_SCRIPT]
+    env = os.environ.copy()
+    env['PYTHONUNBUFFERED'] = '1'
+    env['TEMPDIR'] = bpy.app.tempdir
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True, bufsize=1, env=env)
+    except Exception as exc:
+        print(f'Background measurement failed to start: {exc}')
+        os.remove(temp_blend)
+        return 0
+
+    job = {
+        'process': proc,
+        'temp_blend': temp_blend,
+        'panel': panel,
+        'scene': scene,
+        'result_line': '',
+        'progress_count': 0,
+        'samples': 0,
+        'errors': 0,
+    }
+
+    meter.background_pending = 1
+    meter.background_progress = 0.0
+    bpy.app.timers.register(lambda: streamBackgroundProc(job), first_interval=0.05)
+    return 1
+
+def streamBackgroundProc(job):
+    proc = job['process']
+    stdout = proc.stdout
+    if not stdout:
+        return 0.05
+
+    line = stdout.readline()
+    if not line:
+        job['errors'] += 1
+        print('NO LINE!')
+        if job['errors'] > 99:
+            return
+        return 0.0
+
+    while line:
+        job['progress_count'] += 1
+        text = line.rstrip('\n')
+        handleBackgroundLine(text, job)
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+        if text.startswith('METER_'):
+            job['result_line'] = text
+            finalizeBackgroundMeasurement(job)
+            return None
+        if job['progress_count'] % 4 == 0:
+            return 0.0
+        line = stdout.readline()
+
+    return 0.0
+
+TOTAL_LINES = 62
+def handleBackgroundLine(line, job):
+    scene = job['scene']
+    meter = scene.light_meter
+    total = TOTAL_LINES + meter.sample_count
+    if line.startswith('Fra:'):
+        if '| Sample' in line:
+            tail = line.rsplit('| Sample', 1)[-1].strip()
+            samples, total_samples = [float(x) for x in tail.split('/', 1)]
+            job['samples'] = samples
+        #     print(samples, end=' ', flush=True)
+        # else:
+        #     print('.', end='', flush=True)
+    else:
+        print(f'[LightMeter BG] {line}')
+        # print(meter.background_progress, job['progress_count'] + job['samples'], total)
+    done = job['progress_count'] + job['samples']
+    meter.background_progress = done/total
+    return
+
+def finalizeBackgroundMeasurement(job):
+    proc = job['process']
+    panel = job['panel']
+    scene = job['scene']
+    meter = scene.light_meter
+    stdout = proc.stdout
+    if stdout and not stdout.closed:
+        stdout.close()
+    code = proc.wait()
+    print(f'[LightMeter BG] exit {code}')
+
+    temp_blend = job['temp_blend']
+    if os.path.exists(temp_blend):
+        os.remove(temp_blend)
+
+    meter.background_pending = 0
+    meter.background_progress = 0.0
+    setPanelMeasuring(panel, 0)
+
+    data_line = job.get('result_line', '')
+    if not data_line:
+        print('Background measurement missing result output')
+        return
+
+    payload = data_line.split(':', 1)[-1]
+    parts = payload.split(';')
+    if len(parts) < 3:
+        print(f'Background measurement invalid output: {data_line}')
+        return
+
+    meter.illuminance = float(parts[0])
+    meter.ev_value = float(parts[1])
+
+    img_path = parts[2]
+    IMG_NAME = '.last_meter_debug'
+    old = bpy.data.images.get(IMG_NAME)
+    if old:
+        bpy.data.images.remove(old)
+    img = bpy.data.images.load(img_path)
+    img.name = IMG_NAME
+
 
 # ============= OPERATORS =============
 class LIGHTMETER_OT_step_enum(bpy.types.Operator):
@@ -478,45 +559,12 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.panel = LIGHTMETER_PT_main_panel
-        region = 0
-        for r in context.area.regions:
-            if r.type == 'UI':
-                region = r
-        # x, y = getMeasureButtonPos(region)
-        state = setPanelMeasuring(self.panel)
-        bpy.app.timers.register(lambda: self.exec(context), first_interval=0.1)
-        return {'FINISHED'}
-
-    def exec(self, context):
-        scene = context.scene
-        meter:LightMeterProperties = scene.light_meter
-
-        # Create temp scene for rendering
-        temp_scene = scene.copy()
-        temp_scene.name = f'.lightmeter_{hex(id(temp_scene))}'
-
-        try:
-            # Configure render settings
-            temp_scene.camera = ensureMeterCamera(context)
-            temp_scene.cycles.samples = meter.sample_count
-            temp_scene.cycles.film_exposure = 1.0
-            temp_scene.render.resolution_x = meter.resolution
-            temp_scene.render.resolution_y = meter.resolution
-            temp_scene.render.resolution_percentage = 100
-            temp_scene[BL_CATEGORY] = scene
-
-            # Render
-            temp_scene.update_render_engine()
-            bpy.ops.wm.redraw_timer(type='DRAW_WIN', iterations=1)
-            for area in bpy.context.screen.areas:
-                area.tag_redraw()
-            temp_scene.render.use_lock_interface = 1
-            bpy.ops.render.render('INVOKE_DEFAULT',
-                                  scene=temp_scene.name, write_still=0, use_viewport=0)
-        finally:
-            pass
-
-        return None
+        setPanelMeasuring(self.panel)
+        if startBackgroundMeasurement(context, self.panel):
+            return {'FINISHED'}
+        setPanelMeasuring(self.panel, 0)
+        self.report({'ERROR'}, 'Unable to start measurement')
+        return {'CANCELLED'}
 
 def getCameraItems(meter:'LightMeterProperties', context):
     items = []
@@ -688,8 +736,8 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         # Your blf drawing code goes here
         measure = disp.row(align=1)
         state = getPanelState(LIGHTMETER_PT_main_panel)
-        measuring = state.measuring
-        # measure.enabled = 0
+        measuring = state.measuring or meter.background_pending
+        measure.enabled = 0 if meter.background_pending else 1
 
         button = measure.column(align=1)
         button.alignment = 'EXPAND'
@@ -711,6 +759,15 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         button.scale_x = 0.5
         button.operator('lightmeter.measure',
                          text='', emboss=1, depress=measuring)
+
+        if meter.background_pending:
+            col = layout.column()
+            col.label(text='Background measurement running...', icon='TIME')
+            col.progress(
+                text='Metering...',
+                factor=meter.background_progress,
+                type='BAR',
+            )
 
 
         meter_cam = meter.lightmeter_cam or bpy.data.objects.get('.LightMeterCamera')
@@ -865,6 +922,21 @@ class LightMeterProperties(bpy.types.PropertyGroup):
         description='Display RGB channel breakdown',
         default=False
     ) # type: ignore
+
+    background_pending: BoolProperty(
+        name='Background Measurement Pending',
+        default=False,
+        options={'HIDDEN'}
+    ) # type: ignore
+
+    background_progress: FloatProperty(
+        name='Background Progress',
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        options={'HIDDEN'}
+    ) # type: ignore
+
     show_settings: BoolProperty(name='Settings', default=False) # type: ignore
 
     # Sekonic mode + settings
@@ -1055,15 +1127,10 @@ def setPanelMeasuring(panel, is_measuring=1):
 
 bl_handlers = bpy.app.handlers
 def register():
-    bl_handlers.render_complete.append(handleRenderComplete)
-    bl_handlers.render_cancel.append(handleRenderCancel)
-
     bpy.types.WindowManager.light_meter_panels = \
         bpy.props.CollectionProperty(type=LightMeterPanelState)
     bpy.types.Scene.light_meter = bpy.props.PointerProperty(type=LightMeterProperties)
 
 def unregister():
-    removeIf(bl_handlers.render_complete, handleRenderComplete)
-    removeIf(bl_handlers.render_cancel, handleRenderCancel)
     del bpy.types.WindowManager.light_meter_panels
     del bpy.types.Scene.light_meter

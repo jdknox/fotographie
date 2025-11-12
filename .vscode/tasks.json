@@ -3,16 +3,19 @@
     "tasks": [
         {
             "label": "fotographie-build",
-            "type": "shell",
-            "command": "bash",
+            "type": "process",
+            "command": "python",
             "args": [
-                "-lc",
-                "python dev/build.py"
+                "dev/build.py"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
             },
-            "problemMatcher": []
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "never",
+                "focus": false
+            }
         }        
     ]
 }

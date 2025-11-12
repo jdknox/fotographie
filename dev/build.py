@@ -27,8 +27,24 @@ for path in iterPythonFiles(package_root):
     mtimes.append(os.path.getmtime(path))
 mtime = max(mtimes)
 
-timestomp = datetime.fromtimestamp(mtime).strftime('%y.%m%d.%H%M')
-# version = tuple(x for x in timestomp.split(','))
+dt = datetime.fromtimestamp(mtime)
+part_year = dt.strftime('%y')
+
+month_str = dt.strftime('%m')
+if month_str.startswith('0'):
+    middle = str(dt.timetuple().tm_yday)
+else:
+    middle = dt.strftime('%m%d')
+
+hour_str = dt.strftime('%H')
+if hour_str.startswith('0'):
+    millis = int(dt.microsecond/1000)
+    seconds_since_midnight = 1000*(dt.hour*3600 + dt.minute*60 + dt.second) + millis
+    tail = str(seconds_since_midnight)
+else:
+    tail = dt.strftime('%H%M')
+
+timestomp = f'{part_year}.{middle}.{tail}'
 
 print(f'\nBUILD ({os.path.abspath(".")})\n')
 
