@@ -15,10 +15,10 @@ from math import *
 #     apertureFromExponent, \
 #     CameraExposureSettings
 from .camera import *
+from . import background_job
 
 BL_CATEGORY = 'SuperMeter'
 LIGHT_METER_TRACK_TO = 'Track To'
-BACKGROUND_SCRIPT = f'{os.path.dirname(__file__)}/background_runner.py'
 
 LAYOUT_PADDING_PIXELS = {
     'LAYOUT_BOX': -1,
@@ -265,94 +265,13 @@ def ensureMeterCamera(context):
 
     return cam_obj
 
-def ensureBlendPath():
-    path = bpy.data.filepath
-    if path:
-        return path
-    bpy.ops.wm.save_mainfile()
-    return bpy.data.filepath
-
-def saveTempBlendCopy():
-    handle, path = tempfile.mkstemp(suffix='.blend')
-    os.close(handle)
-    bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
-    return path
-
 def startBackgroundMeasurement(context, panel):
-    scene = context.scene
-    meter = scene.light_meter
-    if meter.background_pending:
-        return 0
-    if not ensureBlendPath():
-        return 0
-    temp_blend = saveTempBlendCopy()
-    binary = bpy.app.binary_path
-    if not binary:
-        os.remove(temp_blend)
-        return 0
-    cmd = [binary,
-           '--background', temp_blend,
-        #    '--addons', 'fotographie',
-           '--python-expr', 'TEMPDIR = "parent/tempdir"',
-           '--python', BACKGROUND_SCRIPT]
-    env = os.environ.copy()
-    env['PYTHONUNBUFFERED'] = '1'
-    env['TEMPDIR'] = bpy.app.tempdir
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True, bufsize=1, env=env)
-    except Exception as exc:
-        print(f'Background measurement failed to start: {exc}')
-        os.remove(temp_blend)
-        return 0
-
-    job = {
-        'process': proc,
-        'temp_blend': temp_blend,
-        'panel': panel,
-        'scene': scene,
-        'result_line': '',
-        'progress_count': 0,
-        'samples': 0,
-        'errors': 0,
-    }
-
-    meter.background_pending = 1
-    meter.background_progress = 0.0
-    bpy.app.timers.register(lambda: streamBackgroundProc(job), first_interval=0.05)
-    return 1
-
-def streamBackgroundProc(job):
-    proc = job['process']
-    stdout = proc.stdout
-    if not stdout:
-        return 0.05
-
-    line = stdout.readline()
-    if not line:
-        job['errors'] += 1
-        print('NO LINE!')
-        if job['errors'] > 99:
-            return
-        return 0.0
-
-    while line:
-        job['progress_count'] += 1
-        text = line.rstrip('\n')
-        handleBackgroundLine(text, job)
-        for area in bpy.context.screen.areas:
-            if area.type == 'VIEW_3D':
-                area.tag_redraw()
-        if text.startswith('METER_'):
-            job['result_line'] = text
-            finalizeBackgroundMeasurement(job)
-            return None
-        if job['progress_count'] % 4 == 0:
-            return 0.0
-        line = stdout.readline()
-
-    return 0.0
+    return background_job.startBackgroundMeasurement(
+        context,
+        panel,
+        handleBackgroundLine,
+        finalizeBackgroundMeasurement,
+    )
 
 TOTAL_LINES = 62
 def handleBackgroundLine(line, job):
@@ -371,8 +290,15 @@ def handleBackgroundLine(line, job):
         print(f'[LightMeter BG] {line}')
         # print(meter.background_progress, job['progress_count'] + job['samples'], total)
     done = job['progress_count'] + job['samples']
+    job['last_line'] = line
     meter.background_progress = done/total
-    return
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+    if line.startswith('METER_'):
+        job['result_line'] = line
+        return 1
+    return 0
 
 def finalizeBackgroundMeasurement(job):
     proc = job['process']

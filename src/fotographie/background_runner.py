@@ -60,8 +60,8 @@ def measureIlluminance(img, cam_data):
     return E_rgb
 
 def tempImgPath():
-    print('   TEMPDIR:', os.environ['TEMPDIR'])
-    tmp_dir = os.environ['TEMPDIR']
+    tmp_dir = os.environ.get('TEMPDIR')
+    print('   TEMPDIR:', tmp_dir)
     tmp_dir = tmp_dir.replace('\\', '/')
     return f'{tmp_dir}/_measure_render'
 
@@ -76,6 +76,7 @@ def ensureCyclesSettings(scene):
     scene.render.resolution_y = resolution
     scene.render.resolution_percentage = 100
     scene.render.use_compositing = 1
+    scene.render.film_transparent = 0
     scene.cycles.samples = samples
     scene.cycles.film_exposure = 1.0
     if hasattr(scene.cycles, 'use_denoising'):
