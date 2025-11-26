@@ -7,8 +7,9 @@ from math import *
 from types import SimpleNamespace as Struct
 
 import inspect
+from . import logger as log
 
-light_meter_panel_states = {}  # "Yes, it's stupid. But it works." --Cllaude
+light_meter_panel_states = {}  # "Yes, it's stupid. But it works." --Claude
 
 def enum(cls):
     _, line = inspect.getsourcelines(cls)
@@ -27,6 +28,7 @@ def enum(cls):
 
 # Standard camera values
 MAX_STEPS = 6
+LOWEST_EV = -10
 
 LOWEST_APERTURE_EV = -2
 HIGHEST_APERTURE_EV = 15
@@ -81,9 +83,15 @@ class PANEL_STATE:
     open:    ...
     closing: ...
 
+def clamp(a, mn, mx):
+    if mn > mx: return None
+    return min(mx, max(a, mn))
+
 def dprint(*args, **kwargs):
-    return
-    print(*args, **kwargs)
+    if not args:
+        return
+    message = ' '.join(str(arg) for arg in args)
+    log.debug(message)
 
 def removeIf(L:list, E):
     result = 0
@@ -100,7 +108,7 @@ def removeIf(L:list, E):
         L.remove(E)
         result = 1
     else:
-        print(f'  {E} not found in {L}')
+        log.warning(f'{E} not found in {L}')
     return result
 
 def snapRenard(denom, use_exceptions=1):
@@ -218,6 +226,14 @@ def aperturePresetFromExponent(exponent):
         return '00'
     return F_NUMBERS[index]
 
+def ensureDefaults(exps):
+    if exps.aperture_preset == DEFAULT_ENUM_IDENT:
+        exps.aperture_preset = f'{5*MAX_STEPS}' # f/5.6
+    if exps.shutter_preset == DEFAULT_ENUM_IDENT:
+        exps.shutter_preset = f'{-6*MAX_STEPS}' # 1/60 s
+    if exps.iso_preset == DEFAULT_ENUM_IDENT:
+        exps.iso_preset = '0'
+
 def apertureFromExponent(preset):
     eva = evFromPreset(preset)
     return pow(2, eva/2)
@@ -230,37 +246,34 @@ def isoSpeedFromExponent(preset):
     evt = evFromPreset(preset)
     return pow(2, evt)*100
 
-def updateAperture(self, context):
-    if self.aperture_preset == DEFAULT_ENUM_IDENT:
-        self.aperture_preset = f'{5*MAX_STEPS}' # f/6.6
-    self.aperture_index = int(self.aperture_preset)
-    updateExposure(self, context)
+def updateAperture(m_exps:'CameraExposureSettings', context):
+    ensureDefaults(m_exps)
+    m_exps.aperture_index = int(m_exps.aperture_preset)
+    updateExposure(m_exps, context)
 
-def updateShutter(self, context):
-    if self.shutter_preset == DEFAULT_ENUM_IDENT:
-        self.shutter_preset = f'{-6*MAX_STEPS}' # 1/60 s
-    self.shutter_index = int(self.shutter_preset)
-    updateExposure(self, context)
+def updateShutter(m_exps:'CameraExposureSettings', context):
+    ensureDefaults(m_exps)
+    m_exps.shutter_index = int(m_exps.shutter_preset)
+    updateExposure(m_exps, context)
 
-def updateISOSpeed(self:'CameraExposureSettings', context):
-    if self.iso_preset == DEFAULT_ENUM_IDENT:
-        self.iso_preset = '0'
-    self.iso_index = int(self.iso_preset)
-    updateExposure(self, context)
+def updateISOSpeed(m_exps:'CameraExposureSettings', context):
+    ensureDefaults(m_exps)
+    m_exps.iso_index = int(m_exps.iso_preset)
+    updateExposure(m_exps, context)
 
-def updateStepSize(self, context):
+def updateStepSize(exps:'CameraExposureSettings', context):
     if not getattr(context, 'camera', 0):
         context.scene.light_meter.panel_state = PANEL_STATE.closed
 
-    ai = self.aperture_index
-    si = self.shutter_index
-    isoi = self.iso_index
-    mod = MAX_STEPS//int(self.step_size)
+    ai = exps.aperture_index
+    si = exps.shutter_index
+    isoi = exps.iso_index
+    mod = MAX_STEPS//int(exps.step_size)
 
-    self.aperture_preset = str(ai - ai%mod)
-    self.shutter_preset = str(si - si%mod)
+    exps.aperture_preset = str(ai - ai%mod)
+    exps.shutter_preset = str(si - si%mod)
     if mod == 3: mod = 2 # We don't do ISO speeds in half steps
-    self.iso_preset = str(isoi + (-isoi)%mod)
+    exps.iso_preset = str(isoi + (-isoi)%mod)
 
 def closePanels():
     states = light_meter_panel_states
@@ -270,34 +283,32 @@ def closePanels():
 
 def updateExposure(self, context):
     '''Update film exposure based on camera settings'''
-    meter = context.scene.light_meter
     closePanels()
-    # if meter.panel_state == PANEL_STATE.open:
-    #     meter.panel_state = PANEL_STATE.closing
 
     camera_data = contextCameraData(context)
     if not camera_data:
         return
 
     dprint(f'  UPDATE_EXPOSURE: {camera_data=}')
-    exps = camera_data.exposure_settings
+    cam_exps = camera_data.exposure_settings
+    ensureDefaults(cam_exps)
 
-    f_stop = apertureFromExponent(exps.aperture_preset)
+    f_stop = apertureFromExponent(cam_exps.aperture_preset)
     dprint(f'{f_stop=};')
 
     # shutter_val = exposure_props.shutter_preset
     # shutter_in_s = float(shutter_val)*1e-3
-    shutter_in_s = shutterFromExponent(exps.shutter_preset)
+    shutter_in_s = shutterFromExponent(cam_exps.shutter_preset)
     dprint(f'{shutter_in_s=}')
 
-    if exps.iso_preset == '':
+    if cam_exps.iso_preset == '':
         # exps.iso_preset = exps.bl_rna.properties['iso_preset'].default
         return
-    iso = isoSpeedFromExponent(exps.iso_preset)
+    iso = isoSpeedFromExponent(cam_exps.iso_preset)
     dprint(f'{iso=}')
 
     # Apply EV adjustment
-    ev_factor = 2**exps.ev_adjustment
+    ev_factor = 2**cam_exps.ev_adjustment
     dprint(f'{ev_factor=}')
 
     # Calculate exposure

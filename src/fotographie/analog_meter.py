@@ -1,26 +1,57 @@
 import bpy
-import gpu, bgl
+import gpu
 import blf
 from gpu_extras.batch import batch_for_shader
-from mathutils import Vector
+from mathutils import Vector, Matrix
 from math import *
-import sys
+import os
+from bpy.app.handlers import persistent
+from .light_meter import (
+    confirmPanel, calcMeasuredFromEV,
+    Metered, MeteredType,
+    LIGHTMETER_PT_main_panel as LIGHTMETER_PT
+)
+from .camera import snapRenard
+from .gpu_utils import *
+from . import logger as log
 
-NIKE = blf.load('F:/Downloads/Fonts/nike-2002-04.ttf')
+FONT_PATH = f'{os.path.dirname(__file__)}/fonts/nike-2002-04.ttf'
 
-def drawMeter(x_pos, y_pos, width, height, current_value, min_value=0.5, max_value=128):
+def loadFont():
+    font_id = 0
+    if os.path.exists(FONT_PATH):
+        loaded = blf.load(FONT_PATH)
+        if loaded >= 0:
+            font_id = loaded
+    else:
+        log.warning(f'Analog meter font missing: {FONT_PATH}')
+    return font_id
+
+FONT_ID = loadFont()
+BOX_THEME = bpy.context.preferences.themes['Default'].user_interface.wcol_box
+
+def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14):
     '''Draw an analog-style exposure meter'''
-    
+
+    current_value = m.ev_value
+    mode = m.type
+    if mode == MeteredType.T:
+    #     min_value = 14
+    #     max_value = -3
+        current_value *= -1
+
     # Calculate normalized position for needle (0.0 to 1.0)
     # Using log scale for f-stops
-    log_current = log2(current_value)
-    log_min = log2(min_value)
-    log_max = log2(max_value)
+    log2_ = lambda x:x
+    log_current = log2_(current_value)
+    log_min = log2_(min_value)
+    log_max = log2_(max_value)
     normalized_pos = (log_current - log_min)/(log_max - log_min)
     normalized_pos = max(0.0, min(1.0, normalized_pos))
     
     # Define f-stop values to display
-    f_stops = [sqrt(2**(f)) for f in range(-1, 15)][:-1]
+    # f_stops = [sqrt(2**(f)) for f in range(-1, 15)][:-1]
+    f_stops = range(-2, 14)
     
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     
@@ -35,19 +66,23 @@ def drawMeter(x_pos, y_pos, width, height, current_value, min_value=0.5, max_val
     indices_bg = [(0, 1, 2), (0, 2, 3)]
     batch_bg = batch_for_shader(shader, 'TRIS', {'pos': vertices_bg}, indices=indices_bg)
     shader.bind()
-    shader.uniform_float('color', (0.2, 0.2, 0.25, 1.0))
+    bg_color = Vector(BOX_THEME.inner).xyz/1.25
+    # bg_color = Vector([0.08627, 0.09411, 0.1255])*1.666
+    bg_color.resize_4d()
+    shader.uniform_float('color', bg_color)
     batch_bg.draw(shader)
     
     # Draw tick marks
-    tick_height = height * 0.3
+    tick_height = height*0.3
     tick_vertices = []
     tick_indices = []
     idx = 0
-    
-    for i, f_stop in enumerate(f_stops):
-        log_stop = log2(f_stop)
+
+    pad = 0
+    for i, ev_label in enumerate(f_stops):
+        log_stop = log2_(ev_label)
         tick_pos = (log_stop - log_min)/(log_max - log_min)
-        tick_x = x_pos + tick_pos*width
+        tick_x = x_pos + tick_pos*width + pad
         
         # Major tick
         tick_vertices.extend([
@@ -60,13 +95,13 @@ def drawMeter(x_pos, y_pos, width, height, current_value, min_value=0.5, max_val
         # Minor ticks between major stops (if space allows)
         if i < len(f_stops) - 1:
             next_stop = f_stops[i + 1]
-            log_next = log2(next_stop)
+            log_next = log2_(next_stop)
             count = 2
             for t in range(count):
                 t_diff = t*(log_next - log_stop)
                 mid_log = (count*log_stop + log_next + t_diff)/(count + 1)
                 mid_pos = (mid_log - log_min)/(log_max - log_min)
-                mid_x = x_pos + mid_pos*width
+                mid_x = x_pos + mid_pos*width + pad
                 
                 minor_tick_height = tick_height*0.5
                 tick_vertices.extend([
@@ -75,15 +110,29 @@ def drawMeter(x_pos, y_pos, width, height, current_value, min_value=0.5, max_val
                 ])
                 tick_indices.append((idx, idx + 1))
                 idx += 2
-    
+
     batch_ticks = batch_for_shader(shader,
         'LINES', {'pos': tick_vertices}, indices=tick_indices)
     shader.bind()
-    shader.uniform_float('color', (0.7, 0.7, 0.7, 1.0))
+    shader.uniform_float('color', (0.666, 0.666, 0.666, 1.0))
+    batch_ticks.draw(shader)
+
+    # base line
+    tick_vertices = [
+        (x_pos, y_pos),
+        (x_pos + width, y_pos),
+    ]
+    tick_indices = [(0, 1)]
+    tick_color = Vector((0.275, 0.298, 0.353, 1.0))
+
+    batch_ticks = batch_for_shader(shader,
+        'LINES', {'pos': tick_vertices}, indices=tick_indices)
+    shader.bind()
+    shader.uniform_float('color', tick_color)
     batch_ticks.draw(shader)
     
     # Draw needle/indicator
-    needle_x = x_pos + normalized_pos*width
+    needle_x = x_pos + normalized_pos*width + pad
     needle_width = 4
     n_height = height*0.8
     needle_vertices = [
@@ -101,132 +150,104 @@ def drawMeter(x_pos, y_pos, width, height, current_value, min_value=0.5, max_val
     batch_needle.draw(shader)
     
     # Draw f-stop labels
-    sizes = [14, 24]
-    half_sizes = [16, 32]
-    font_id = 1
-    font = NIKE
-    if font > 0: font_id = font
-
-    font_size = sizes[font_id] if font_id < len(sizes) else 14
+    font_id = FONT_ID if FONT_ID >= 0 else 0
     blf.color(font_id, 0.8, 0.8, 0.8, 1.0)
     
-    for f_stop in f_stops:
-        log_stop = log2(f_stop)
-        label_pos = (log_stop - log_min) / (log_max - log_min)
-        label_x = x_pos + label_pos * width
+    # print(current_value)
+    for ev_label in f_stops:
+        log_stop = log2_(ev_label)
+        label_pos = (log_stop - log_min)/(log_max - log_min)
+        label_x = x_pos + label_pos*width
         
         # Format label
-        blf.size(font_id, font_size)
-        if f_stop == int(f_stop) or f_stop >= 10:
-            label_text = str(int(f_stop))
-        elif f_stop == 0.5:
-            label_text = '\xbd'
-            blf.size(font_id, 16)
-        else:
-            label_text = f'{f_stop:0.1f}'
-            if label_text == '5.7': label_text = '5.6'
+        match mode:
+            case MeteredType.F:
+                label = max(0.0, pow(2, ev_label/2))
+                if label == int(label) or label >= 10:
+                    label_text = str(int(label))
+                else:
+                    label_text = f'{label:0.1f}'
+                    if label_text == '5.7': label_text = '5.6'
+
+                if label < 1.0:
+                    # label_text = '\xbd' # unicode:`1/2` (½)
+                    label_text = label_text[1:]
+                    blf.size(font_id, 16)
+            case MeteredType.T:
+                sign = -1 if ev_label < 0 else 1
+                label = pow(2, sign*ev_label)
+                suffix = unit = ''
+                if sign < 0:
+                    unit = 's'
+                shutter = int(snapRenard(label))
+                if shutter > 999:
+                    suffix = 'k'
+                    shutter = int(shutter/1000)
+                label_text = f'{shutter}{suffix}{unit}'
+            case _:
+                label_text = '--'
         
+        blf.size(font_id, 14)
         text_width, text_height = blf.dimensions(font_id, label_text)
-        blf.position(font_id, label_x - text_width/2, y_pos + 5, 0)
+        blf.position(font_id, label_x - text_width/2 + pad, y_pos + 5, 0)
         blf.draw(font_id, label_text)
 
-
-def drawCallback():
-    '''Callback function for drawing the meter in the UI region'''
+DISPLAY_HEIGHT = 102
+def drawAnalogMeter(panel):
     context = bpy.context
+    region = context.region
+    panel_state = confirmPanel(panel, region.active_panel_category)
+    if not panel_state:
+        return
+    meter = context.scene.light_meter
+    uiscale = context.preferences.view.ui_scale
     
-    # Get the meter value from scene properties
-    if hasattr(context.scene, 'meter_value'):
-        meter_value = context.scene.meter_value
-    else:
-        meter_value = 5.6  # Default value
-    
-    # Position in the UI - you'll need to adjust these based on your panel location
-    # These coordinates are in pixel space relative to the region
-    x = 64
-    y = 100
-    width = 340
-    height = 42
-    
-    drawMeter(x, y, width, height, meter_value)
+    m:Metered = calcMeasuredFromEV(meter)
 
+    gutter_A = 10
+    gutter = 40 + gutter_A
+    region_width = (region.width - gutter)/uiscale
 
-def registerDrawHandler():
-    '''Register the draw handler'''
-    unregisterDrawHandler()
-    draw_handler = bpy.types.SpaceProperties.draw_handler_add(
-        drawCallback, (), 'WINDOW', 'POST_PIXEL'
-    )
-    sys.modules['draw_handler'] = draw_handler
+    pad = 13/uiscale
+    width = (region_width - 2*pad)*0.94
+    x = (region_width - width)/2 + gutter_A/uiscale
 
+    height = 30
+    _, y = getDisplayPos(region, 1)
+    vw, vy = region.view2d.region_to_view(region.width/uiscale, y/uiscale)
+    vy -= 1.5*DISPLAY_HEIGHT
+    rw, ry = region.view2d.view_to_region((vw - gutter/2)/uiscale, vy, clip=0)
 
-def unregisterDrawHandler():
-    '''Unregister the draw handler'''
-    draw_handler = sys.modules['draw_handler']
-    if draw_handler:
-        bpy.types.SpaceProperties.draw_handler_remove(draw_handler, 'WINDOW')
-        sys.modules['draw_handler'] = 0
+    x, y, width, height = [uiscale*V for V in [x, ry, rw, height]]
+    drawMeter(x, y, width, height, m)
 
+@persistent
+def reloadAnalogMeter(filepath=0):
+    global FONT_ID
+    FONT_ID = loadFont()
 
-class LIGHTMETER_PT_Panel(bpy.types.Panel):
-    '''Light Meter Panel with Analog Display'''
-    bl_label = 'Incident Light Meter'
-    bl_idname = 'LIGHTMETER_PT_panel'
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = 'scene'
-    
-    def draw(self, context):
-        layout = self.layout
-        scene = context.scene
-        
-        # Exposure settings
-        box = layout.box()
-        box.label(text='Exposure Settings')
-        box.prop(scene, 'meter_value', text='F-Stop')
-        
-        # Reserve space for the analog meter
-        # The actual drawing happens via the draw handler
-        box = layout.box()
-        box.label(text='Analog Meter Display')
-        # Create empty space where the meter will be drawn
-        col = box.column()
-        col.scale_y = 3.0
-        col.label(text='')
-        
-        layout.separator()
-        layout.label(text='Meter draws in region above')
-
-def updateTag(scene, context):
-    print(scene, context)
-
+handler_info = {
+    'handler': None,
+    'region_type': 'UI',
+}
 def register():
-    NIKE = blf.load('F:/Downloads/Fonts/nike-2002-04.ttf')
+    reloadAnalogMeter()
+    if reloadAnalogMeter not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(reloadAnalogMeter)
 
-    # Register scene property
-    bpy.types.Scene.meter_value = bpy.props.FloatProperty(
-        name='Meter Value',
-        description='Current f-stop reading',
-        default=5.6,
-        min=0.5,
-        max=90.0,
-        update=updateTag
-    )
-    
-    bpy.utils.register_class(LIGHTMETER_PT_Panel)
-    sys.modules.setdefault('draw_handler', 0)
-    registerDrawHandler()
-
+    handler = handler_info['handler']
+    REGION_TYPE = handler_info['region_type']
+    if handler:
+        bpy.types.SpaceView3D.draw_handler_remove(handler, handler_info['region_type'])
+    dha = bpy.types.SpaceView3D.draw_handler_add
+    handler_info['handler'] = dha(drawAnalogMeter, (LIGHTMETER_PT,), REGION_TYPE, 'POST_PIXEL')
+    log.info(f'Analog meter draw handler registered ({REGION_TYPE})')
 
 def unregister():
-    unregisterDrawHandler()
-    bpy.utils.unregister_class(LIGHTMETER_PT_Panel)
-    
-    # Remove scene property
-    del bpy.types.Scene.meter_value
+    if reloadAnalogMeter in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(reloadAnalogMeter)
 
-
-if __name__ == '__main__':
-    sys.modules.setdefault('draw_handler', 0)
-    unregisterDrawHandler()
-    register()
+    handler = handler_info.get('handler')
+    if handler:
+        bpy.types.SpaceView3D.draw_handler_remove(handler, handler_info['region_type'])
+        handler_info['handler'] = None

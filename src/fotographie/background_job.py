@@ -5,17 +5,11 @@ import tempfile
 import select
 import ctypes
 from ctypes import wintypes
+from . import logger as log
 
 IS_WIN32 = os.name == 'nt'
 if IS_WIN32:
     import msvcrt
-
-def ensureBlendPath():
-    path = bpy.data.filepath
-    if path:
-        return path
-    bpy.ops.wm.save_mainfile()
-    return bpy.data.filepath
 
 def saveTempBlendCopy():
     handle, path = tempfile.mkstemp(suffix='.blend')
@@ -28,8 +22,7 @@ def startBackgroundMeasurement(context, panel, line_handler, finish_handler):
     meter = scene.light_meter
     if meter.background_pending:
         return 0
-    if not ensureBlendPath():
-        return 0
+
     temp_blend = saveTempBlendCopy()
     binary = bpy.app.binary_path
     if not binary:
@@ -53,7 +46,7 @@ def startBackgroundMeasurement(context, panel, line_handler, finish_handler):
             env=env,
         )
     except Exception as exc:
-        print(f'Background measurement failed to start: {exc}')
+        log.error(f'Background measurement launch failed: {exc}')
         os.remove(temp_blend)
         return 0
 

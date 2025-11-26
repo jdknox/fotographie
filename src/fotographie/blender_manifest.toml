@@ -7,7 +7,7 @@ schema_version = '1.0.0'
 # Example of manifest file for a Blender extension
 # Change the values according to your extension
 id = 'fotographie'
-version = '25.1113.1800'
+version = '25.1126.44779'
 name = 'Fotographie'
 tagline = 'Physically based camera exposure settings and light meter'
 maintainer = 'knox'

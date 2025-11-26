@@ -1,13 +1,12 @@
 #
 
 import bpy
-import gpu
+import blf
+
 from bpy.props import *
 from mathutils import *
 
-import time
-import os, subprocess, tempfile
-import numpy as np
+import os
 from dataclasses import dataclass as struct
 from math import *
 
@@ -16,7 +15,9 @@ from math import *
 #     CameraExposureSettings
 from .camera import *
 from . import background_job
+from . import logger as log
 
+DEBUG = 0
 BL_CATEGORY = 'SuperMeter'
 LIGHT_METER_TRACK_TO = 'Track To'
 
@@ -65,67 +66,6 @@ def getEnumIdentifiers(container, prop_name):
     #     return []
     # return [item.identifier for item in prop.enum_items]
 
-def findBlueRun(buf_u8, w, h, run_len=3, target=(0x70, 0xB2, 0xFF)):
-    ch = buf_u8.dimensions[0] // (w*h)
-    target_rgb = np.array(target, dtype=np.uint8)
-    arr = np.asarray(buf_u8, dtype=np.uint8).reshape(h, w, ch)
-
-    if w < run_len:
-        return -1, -1
-
-    window = np.ones(run_len, dtype=np.uint8)
-    y = h - 1
-    while y >= 0:
-        row = arr[y, :, :3]
-        matches = np.all(row == target_rgb, axis=1).astype(np.uint8)
-        if matches.any():
-            hits = np.convolve(matches, window, mode='valid')
-            x = np.flatnonzero(hits >= run_len)
-            if x.size:
-                return int(x[0]), int(y)
-        y -= 1
-    return -1, -1
-
-
-def getDisplayPos(region, is_handler=0):
-    T = bpy.data.texts
-    I = bpy.data.images
-
-    fb = gpu.state.active_framebuffer_get()
-    if is_handler:
-        x, y, w, h = fb.viewport_get()
-    else:
-        x = region.x
-        y = region.y
-        w = region.width
-        h = region.height
-
-    # print(f'{fb.viewport_get()=}; <{x=}, {y=}> <{w=}, {h=}>')
-    b_type = 'UBYTE'
-    ch = 4
-    data = gpu.types.Buffer(b_type, w*h*ch)    
-    fb.read_color(x, y, w, h, ch, 0, b_type, data=data)
-    start = time.perf_counter()
-    pos = findBlueRun(data, w, h)
-
-    if 0:
-        rgb = np.asarray(data, dtype=np.float32)/255
-        if ch == 3:
-            rgb = rgb.reshape(-1, 3)
-            alpha = np.ones((rgb.shape[0], 1), dtype=rgb.dtype)
-            rgba = np.hstack((rgb, alpha)).reshape(-1)
-        else:
-            rgba = rgb
-        name = 'RegionCapture'
-        img = I.get(name) or I.new(name=name, width=w, height=h)
-        if list(img.size) != [w, h]:
-            I.remove(img)
-            img = I.new(name=name, width=w, height=h)
-        img.pixels.foreach_set(rgba)
-    elapsed = time.perf_counter() - start
-    # print(f'{pos=} (took {elapsed*1000:0.1f} ms)')
-    return pos
-
 # ===== Sekonic-style exposure helpers =====
 def getShutterMilliseconds(meter):
     ms = getShutterSeconds(meter)*1024
@@ -167,7 +107,7 @@ def calcMeasuredFromEV(meter):
 
     ES100_C = 2**(ev - comp_dir*meter.ec)
     EV_S = evFromPreset(exps.iso_preset)
-    if ev <= -9.9:
+    if ev <= LOWEST_EV:
         return Metered(type=0, ev_value=ev,
                        snapped=0, tenths='-',
                        prefix=prefix, suffix=suffix)
@@ -177,11 +117,6 @@ def calcMeasuredFromEV(meter):
         EV_t = evFromPreset(exps.shutter_preset)
         ev_adj = ev - comp_dir*meter.ec
         EV_a = EV_t + ev_adj + EV_S
-        # t = getShutterSeconds(meter)
-        # N = sqrt(t*ES_C)
-        ## print(f'{t=}; {N=}')
-        # full = pow(2, floor(2*log2(N))/2)
-        # frac = stepTenths(ev)
         EV_full = floor(EV_a*step_size)/step_size
         EV_frac = round(10*(EV_a - EV_full))
         prefix = 'f/'
@@ -212,7 +147,6 @@ def calcMeasuredFromEV(meter):
             suffix += '"'
         else:
             prefix = '1/'
-        # print(f'{EV_t=:.3f}; {shutter=:.6f}')
 
         return Metered(type=MeteredType.T, ev_value=EV_t,
                        snapped=shutter, tenths=EV_frac,
@@ -253,8 +187,12 @@ def ensureMeterCamera(context):
         cam_obj.location = scene.cursor.location
         cam_obj.rotation_euler = (pi/2, 0, 0)  # Point forward
     meter.lightmeter_cam = cam_obj
+    for f in [updateAperture, updateShutter, updateISOSpeed]:
+        f(meter.exposure_settings, context)
 
     cam_data = cam_obj.data
+    cexps = cam_data.exposure_settings
+    log.debug(f'Scene camera presets: {cexps.aperture_preset}, {cexps.shutter_preset}, {cexps.iso_preset}')
     cam_data.type = 'PANO'
     cam_data.panorama_type = 'EQUIRECTANGULAR'
     cam_data.latitude_min = -pi/2
@@ -283,12 +221,8 @@ def handleBackgroundLine(line, job):
             tail = line.rsplit('| Sample', 1)[-1].strip()
             samples, total_samples = [float(x) for x in tail.split('/', 1)]
             job['samples'] = samples
-        #     print(samples, end=' ', flush=True)
-        # else:
-        #     print('.', end='', flush=True)
     else:
         print(f'[LightMeter BG] {line}')
-        # print(meter.background_progress, job['progress_count'] + job['samples'], total)
     done = job['progress_count'] + job['samples']
     job['last_line'] = line
     meter.background_progress = done/total
@@ -321,13 +255,13 @@ def finalizeBackgroundMeasurement(job):
 
     data_line = job.get('result_line', '')
     if not data_line:
-        print('Background measurement missing result output')
+        log.error('Background measurement missing result output')
         return
 
     payload = data_line.split(':', 1)[-1]
     parts = payload.split(';')
     if len(parts) < 3:
-        print(f'Background measurement invalid output: {data_line}')
+        log.error(f'Background measurement invalid output: {data_line}')
         return
 
     meter.illuminance = float(parts[0])
@@ -382,7 +316,7 @@ class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
     def poll(cls, context):
         return getattr(context.scene, 'camera', 0)
 
-    def execute(self, context):
+    def execute(self:bpy.types.Operator, context):
         scene = context.scene
         cam_obj = scene.camera
         if not cam_obj:
@@ -408,11 +342,24 @@ class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
             setattr(dst, attr, getattr(src, attr))
 
         measured = calcMeasuredFromEV(meter)
+        if measured.ev_value <= LOWEST_EV:
+            self.report({'WARNING'}, 'Meter EV value too low for camera')
+            # return {'CANCELLED'}
+
         steps = int(meter.exposure_settings.step_size)
         M = MAX_STEPS//steps
-        print(measured.ev_value, measured.ev_value*steps, int(measured.ev_value*steps))
-        preset = floor(measured.ev_value*steps)*M
-        print(preset)
+        log.debug(f'Meter EV raw values: {measured.ev_value}, {measured.ev_value*steps}, {int(measured.ev_value*steps)}')
+
+        ev_value = measured.ev_value
+        if meter.mode == 'F':
+            ev_value = clamp(ev_value, FASTEST_SHUTTER_EV, SLOWEST_SHUTTER_EV)
+        elif meter.mode == 'T':
+            ev_value = clamp(ev_value, LOWEST_APERTURE_EV, HIGHEST_APERTURE_EV)
+        elif meter.mode == 'ISO':
+            ev_value = clamp(ev_value, SLOWEST_ISOSPEED_EV, FASTEST_ISOSPEED_EV)
+
+        preset = floor(ev_value*steps)*M
+        log.debug(f'Exposure preset: {preset}')
         if meter.mode == 'F':
             dst.shutter_preset = f'{preset}'
             dst.shutter_index = preset
@@ -422,8 +369,19 @@ class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
 
         ctx = Struct(scene=scene, camera=cam_obj.data)
         updateExposure(dst, ctx)
-        self.report({'INFO'}, 'Meter settings applied to active camera')
+        if measured.ev_value != ev_value:
+            self.report({'WARNING'}, 'Meter EV value outside realistic camera range!')
+        else:
+            self.report({'INFO'}, 'Meter settings applied to active camera')
         return {'FINISHED'}
+
+def setSpaceContext(type):
+    error = 0
+    try:
+        bpy.ops.wm.context_set_enum(data_path='space_data.context', value=type)
+    except (RuntimeError, TypeError):
+        error = 'CAMER DATA tab not found'
+    return error
 
 class LIGHTMETER_OT_focus_scene_camera(bpy.types.Operator):
     bl_idname = 'lightmeter.focus_scene_camera'
@@ -456,10 +414,19 @@ class LIGHTMETER_OT_focus_scene_camera(bpy.types.Operator):
                     break
             if not region:
                 continue
-            with context.temp_override(window=context.window, area=area, region=region):
-                bpy.ops.wm.context_set_enum(data_path='space_data.context', value='DATA')
-            break
 
+            items = space.bl_rna.properties['context'].enum_items.keys()
+            if 'DATA' in items and space.show_properties_data:
+                with context.temp_override(window=context.window, area=area, region=region):
+                    error = setSpaceContext('DATA')
+                    if error:
+                        self.report({'ERROR'}, 'Camera Data tab not found.')
+                break
+            else:
+                log.warning(f'Properties space lacks DATA context (type={space.type}, options={items})')
+                self.report({'WARNING'}, 'Could not switch to Camera Data tab. It might be hidden.')
+
+        # print(space.type, items)
         return {'FINISHED'}
 
 class LIGHTMETER_OT_ensure_helper(bpy.types.Operator):
@@ -476,7 +443,7 @@ class LIGHTMETER_OT_ensure_helper(bpy.types.Operator):
         return {'FINISHED'}
 
 class LIGHTMETER_OT_measure(bpy.types.Operator):
-    '''Measure incident light at 3D cursor position'''
+    '''Measure incident light on meter'''
     bl_idname = 'lightmeter.measure'
     bl_label = 'Measure Light'
     bl_options = {'REGISTER', 'UNDO'}
@@ -486,6 +453,7 @@ class LIGHTMETER_OT_measure(bpy.types.Operator):
     def invoke(self, context, event):
         self.panel = LIGHTMETER_PT_main_panel
         setPanelMeasuring(self.panel)
+        ensureMeterCamera(context)
         if startBackgroundMeasurement(context, self.panel):
             return {'FINISHED'}
         setPanelMeasuring(self.panel, 0)
@@ -594,7 +562,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             else:
                 d = -floor(log10(ms)) + 2
                 str_ms = f'{round(ms, d)} ms'
-            c1.box().label(text=f'{str_ms}')
+            if DEBUG: c1.box().label(text=f'{str_ms}')
         else:
             display_type = 'T'
             # set_row.box().label(text=f'{ms} ms')
@@ -614,7 +582,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op.group_attr = 'exposure_settings'
             op.prop_name = 'aperture_preset'
             op.direction = +1
-            c1.box().label(text=f'{apertureFromMeter(meter):.2f}')
+            if DEBUG: c1.box().label(text=f'{apertureFromMeter(meter):.2f}')
         else:
             display_type = 'F'
             aux=''
@@ -632,7 +600,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op.group_attr = 'exposure_settings'
             op.prop_name = 'iso_preset'
             op.direction = +1
-            c2.box().label(text=f'{exps.iso_preset}')
+            if DEBUG: c2.box().label(text=f'{exps.iso_preset}')
         else:
             display_type = 'ISO'
 
@@ -645,18 +613,30 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         # === Big readout (measured value) ===
         disp = layout.split(factor=0.89)
         big = disp.box()
-        # big.scale_y = 4
         big.alignment = 'EXPAND'
-        small = big.split(factor=2/log2(context.region.width))
+        inside = big.column()
+
+        small = inside.split(factor=2/log2(context.region.width))
         r0 = small.row()
         r0.label(text=display_type, icon='NODE_SOCKET_STRING')
+        if meter.background_pending:
+            col = inside#.column()
+            col.label(text='Background measurement running...', icon='TIME')
+            col.progress(
+                text='Metering...',
+                factor=meter.background_progress,
+                type='BAR', )
+            big_height = 0.001
+        else:
+            big_height = 2.2
+
         info = r0.column(heading='h')
         info.alignment = 'RIGHT'
         info.scale_y = 1
         info.label(text='')
         info.label(text=aux)
         pad = info.row()
-        pad.scale_y = 2
+        pad.scale_y = big_height
         pad.label(text=display_type)
 
         # Your blf drawing code goes here
@@ -667,24 +647,14 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
 
         button = measure.column(align=1)
         button.alignment = 'EXPAND'
-        button.scale_y = 4.6
+        button.scale_y = 4.85
         button.operator('lightmeter.measure',
                          text=' ', icon='THREE_DOTS', depress=measuring)
 
-        label = measure.column(align=1)
-        label.scale_y = 0.656
-        # label.alignment = 'LEFT'
-        # label.label(text='M', icon='EVENT_M')
-        for c in 'MEASURE':
-            label.operator('lightmeter.measure', text=c,
-                           emboss=1, depress=measuring)
-
-        button = measure.column(align=1)
-        button.alignment = 'RIGHT'
-        button.scale_y = 4.6
-        button.scale_x = 0.5
-        button.operator('lightmeter.measure',
-                         text='', emboss=1, depress=measuring)
+        # === Analog scale (-3 to +3 EV) ===
+        analog_row = layout.box()
+        analog_row.scale_y = 2
+        analog_row.label()
 
         meter_cam = meter.lightmeter_cam or bpy.data.objects.get('.LightMeterCamera')
         track = meter_cam.constraints.get(LIGHT_METER_TRACK_TO) if meter_cam else None
@@ -726,29 +696,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             cam_name = 'None! Light meter requires a tracking constraint.'
             target_row.label(text=f'Target: {cam_name}', icon='PIVOT_CURSOR')
 
-        # === Analog scale (-3 to +3 EV) ===
-        # scale_box = layout.box()
-        # # Scale labels
-        # labels = scale_box.row(align=True)
-        # labels.scale_y = 0.9
-        # marks = ['-3', '-2', '-1', '0', '1', '2', '3']
-        # for m in marks:
-        #     labels.label(text=m)
-
-        # # Indicator position
-        # indicator = scale_box.row(align=True)
-        # idx = 3
-        # if meter.ev_value > -9.9:
-        #     frac = meter.ev_value - floor(meter.ev_value)
-        #     shift = int(round(frac * 3))
-        #     idx = max(0, min(6, 3 + shift))
-
-        # for i in range(7):
-        #     if i == idx:
-        #         indicator.label(text='|', icon='KEYFRAME_HLT')
-        #     else:
-        #         indicator.label(text=' ')
-
         # Settings
         # settings_box = layout.box()
         state_names = {value: name for name, value in \
@@ -758,15 +705,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         text = f'Settings: ({meter.illuminance:0.1f} lx; {meter.ev_value:0.3f})'
         # text += f' (panel_state:{state_names[meter.panel_state]})'
         header.label(text=text, icon='PREFERENCES')
-
-        if meter.background_pending:
-            col = layout.column()
-            col.label(text='Background measurement running...', icon='TIME')
-            col.progress(
-                text='Metering...',
-                factor=meter.background_progress,
-                type='BAR',
-            )
 
         if not meter.show_settings:
             return
@@ -952,7 +890,7 @@ def panelDraw(self, context):
 
     if light_meter_panel_states[self.bl_idname] == PANEL_STATE.closing:
         light_meter_panel_states[self.bl_idname] = PANEL_STATE.closed
-        print(f'CLOSING {menu_type}')
+        log.debug(f'Closing popup menu {menu_type}')
         return
     light_meter_panel_states[self.bl_idname] = PANEL_STATE.open
     # if meter.panel_state == PANEL_STATE.closing:
@@ -1025,12 +963,13 @@ classes = [
 
 def confirmPanel(panel, current_category):
     wm = bpy.context.window_manager
-    state = wm.light_meter_panels.get(panel.bl_idname, 0)
+    state = getPanelState(panel)
     if state and state.is_open:
         if current_category == state.panel_category:
             return state
         else:
             return 0
+    return 0
 
 def getPanelState(panel):
     wm = bpy.context.window_manager
