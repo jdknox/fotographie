@@ -158,6 +158,10 @@ def calcMeasuredFromEV(meter):
     N = apertureFromMeter(meter)
     S_meas = 100.0*(N*N/t)/ES100_C
     S_meas = max(3, min(409600, S_meas))
+    snapped = snapRenard(S_meas)
+    return Metered(type=MeteredType.ISO, ev_value=log2(S_meas/100),
+                       snapped=snapped, tenths=0,
+                       prefix='ISO', suffix='')
     return ('ISO', f'{int(round(S_meas))}')
 
 def ensureMeterCamera(context):
@@ -349,14 +353,14 @@ class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
 
         steps = int(meter.exposure_settings.step_size)
         M = MAX_STEPS//steps
-        log.debug(f'Meter EV raw values: {measured.ev_value}, {measured.ev_value*steps}, {int(measured.ev_value*steps)}')
+        log.debug(f'Meter EV (mode:{meter.mode}): {measured.ev_value}, {measured.ev_value*steps}, {int(measured.ev_value*steps)}')
 
         ev_value = measured.ev_value
         if meter.mode == 'F':
             ev_value = clamp(ev_value, FASTEST_SHUTTER_EV, SLOWEST_SHUTTER_EV)
         elif meter.mode == 'T':
             ev_value = clamp(ev_value, LOWEST_APERTURE_EV, HIGHEST_APERTURE_EV)
-        elif meter.mode == 'ISO':
+        elif meter.mode == 'TF':
             ev_value = clamp(ev_value, SLOWEST_ISOSPEED_EV, FASTEST_ISOSPEED_EV)
 
         preset = floor(ev_value*steps)*M
@@ -367,6 +371,9 @@ class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
         elif meter.mode == 'T':
             dst.aperture_preset = f'{preset}'
             dst.aperture_index = preset
+        elif meter.mode == 'TF':
+            dst.iso_preset = f'{preset}'
+            dst.iso_index = preset
 
         ctx = Struct(scene=scene, camera=cam_obj.data)
         updateExposure(dst, ctx)
@@ -446,7 +453,7 @@ class LIGHTMETER_OT_ensure_helper(bpy.types.Operator):
 class LIGHTMETER_OT_select_meter(bpy.types.Operator):
     bl_idname = 'lightmeter.select_meter'
     bl_label = 'Select Meter Camera'
-    bl_description = 'Select the hidden light meter camera in the 3D View'
+    bl_description = 'Select the light meter camera in the 3D View'
     bl_options = {'INTERNAL'}
 
     @classmethod
@@ -579,7 +586,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op.direction = -1
             # c1.prop(exps, 'shutter_preset', text='')
             c1.prop_with_popover(exps, 'shutter_preset', text='',
-                                 panel=LIGHTMETER_PT_aperture_menu.bl_idname)
+                                 panel=LIGHTMETER_PT_shutter_menu.bl_idname)
             op = c1.operator('lightmeter.step_enum', text='', icon='TRIA_DOWN', emboss=0)
             op.group_attr = 'exposure_settings'
             op.prop_name = 'shutter_preset'
@@ -640,7 +647,16 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             create.operator('lightmeter.ensure_helper', text='Create Light Meter', icon='STRIP_COLOR_01')
 
         # === Big readout (measured value) ===
-        disp = layout.split(factor=0.89)
+        region = context.region
+        v2d = region.view2d
+        rwidth, _ = v2d.view_to_region(region.width, 0, clip=0)
+        rscale = rwidth/region.width
+
+        trial = 1 - rscale*0.11
+        capped = max(min((1 - trial)*region.width, 64), 60)
+        bw = 85 - rscale*20
+        fac = 1 - rscale*bw/region.width
+        disp = layout.split(factor=fac)    # 2->.78, 1->.89, 0.5->
         big = disp.box()
         big.alignment = 'EXPAND'
         inside = big.column()
@@ -731,9 +747,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
                             PANEL_STATE.__dict__.items()
                             if not name.startswith('_')}
         header, settings_box = layout.panel_prop(meter, 'show_settings')
-        text = f'Settings: ({meter.illuminance:0.1f} lx; {meter.ev_value:0.3f})'
-        # text += f' (panel_state:{state_names[meter.panel_state]})'
-        header.label(text=text, icon='PREFERENCES')
+        header.label(text='Advanced', icon='PREFERENCES')
 
         if not meter.show_settings:
             return
@@ -741,6 +755,9 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         settings_col = settings_box.column(align=1)
         settings_col.use_property_split = 1
         settings_col.use_property_decorate = 0
+
+        text = f'Illuminance: {meter.illuminance:0.1f} lx (EV {meter.ev_value:0.3f})'
+        settings_col.box().label(text=text, icon='LIGHT_AREA')
 
         comp = settings_col.split(align=1, factor=0.41)
         comp.use_property_split = 0
@@ -885,6 +902,23 @@ def _defer(idname, meter, prop, val):
     # else:
     #     bpy.app.timers.register(lambda: setattr(meter, 'panel_owner', idname))
 
+class LIGHTMETER_PT_shutter_menu(bpy.types.Panel):
+    bl_label = 'Select'
+    bl_idname = 'LIGHTMETER_PT_ShutterSelectMenu'
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_options = {'INSTANCED'}
+    bl_category = BL_CATEGORY
+    type = 'T_MENU'
+    light_meter_panel_states[bl_idname] = 0
+
+    @classmethod
+    def poll(cls, context):
+        panelPoll(cls, context)
+
+    def draw(self, context):
+        panelDraw(self, context)
+
 class LIGHTMETER_PT_aperture_menu(bpy.types.Panel):
     bl_label = 'Select'
     bl_idname = 'LIGHTMETER_PT_SelectMenu'
@@ -893,7 +927,7 @@ class LIGHTMETER_PT_aperture_menu(bpy.types.Panel):
     bl_options = {'INSTANCED'}
     bl_category = BL_CATEGORY
     bl_ui_units_x = 10
-    type = 'F_OR_T_MENU'
+    type = 'F_MENU'
     light_meter_panel_states[bl_idname] = 0
 
     @classmethod
@@ -928,14 +962,14 @@ def panelDraw(self, context):
     # defer(self.bl_idname, meter, 'panel_state', PANEL_STATE.open)
 
     # cols = int(exps.step_size)
-    if meter.mode == 'T':
+    layout.label(text=f'{meter.mode=}; {menu_type=}')
+    if menu_type == 'T_MENU':
         priority = 'shutter_preset'
         all = generateShutterSpeeds(exps)
-    elif meter.mode == 'F':
+    elif menu_type == 'F_MENU':
         priority = 'aperture_preset'
         all = generateApertures(exps)
-
-    if self.type == 'ISO_MENU':
+    elif menu_type == 'ISO_MENU':
         priority = 'iso_preset'
         all = generateISOSpeeds(exps)
     # if cols > 1:

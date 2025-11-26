@@ -51,6 +51,8 @@ def drawText(panel):
             text = f'{round(full, factor)}{m.suffix}'
         case MeteredType.F:
             text = aperturePresetFromExponent(full)
+        case MeteredType.ISO:
+            text = f'{full}'
         case _:
             text = '--'
 
@@ -101,10 +103,15 @@ def drawText(panel):
     FONT_R = 0
     measure_text = 'MEASURE'
     wp, hp = blf.dimensions(FONT_R, measure_text)
-    blf.position(FONT_R, region.width - pad - 25/uiscale, icon_top - 10, 0)
+    x, y = region.width - pad - 28/uiscale, icon_top - 6*rscale
     blf.enable(FONT_R, blf.ROTATION)
     blf.rotation(FONT_R, -pi/2)
+
+    blf.size(FONT_R, 16*rscale)
+    blf.color(FONT_R, *TEXT_COLOR)
+    blf.position(FONT_R, x, y, 0)
     blf.draw(FONT_R, measure_text)
+
     blf.disable(FONT_R, blf.ROTATION)
 
 REGION_TYPE = 'UI'

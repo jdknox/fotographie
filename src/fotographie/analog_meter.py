@@ -184,6 +184,9 @@ def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14
                     suffix = 'k'
                     shutter = int(shutter/1000)
                 label_text = f'{shutter}{suffix}{unit}'
+            # case MeteredType.ISO:
+            #     label = int(pow(2, ev_label))*100
+            #     label_text = f'{label}'
             case _:
                 label_text = '--'
         
@@ -201,8 +204,6 @@ def drawAnalogMeter(panel):
         return
     meter = context.scene.light_meter
     uiscale = context.preferences.view.ui_scale
-    
-    m:Metered = calcMeasuredFromEV(meter)
 
     gutter_A = 10
     gutter = 40 + gutter_A
@@ -217,9 +218,10 @@ def drawAnalogMeter(panel):
     vw, vy = region.view2d.region_to_view(region.width/uiscale, y/uiscale)
     vy -= 1.5*DISPLAY_HEIGHT
     rw, ry = region.view2d.view_to_region((vw - gutter/2)/uiscale, vy, clip=0)
+    rscale = region.width/vw/uiscale
 
     x, y, width, height = [uiscale*V for V in [x, ry, rw, height]]
-    drawMeter(x, y, width, height, m)
+    drawMeter(x, y, width, height*rscale, calcMeasuredFromEV(meter))
 
 @persistent
 def reloadAnalogMeter(filepath=0):
