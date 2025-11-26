@@ -20,6 +20,7 @@ from . import logger as log
 DEBUG = 0
 BL_CATEGORY = 'SuperMeter'
 LIGHT_METER_TRACK_TO = 'Track To'
+LIGHT_METER_CAM = '.LightMeterCamera'
 
 LAYOUT_PADDING_PIXELS = {
     'LAYOUT_BOX': -1,
@@ -164,7 +165,7 @@ def ensureMeterCamera(context):
     meter:LightMeterProperties = scene.light_meter
 
     # Create or get dome camera
-    cam_name = '.LightMeterCamera'
+    cam_name = LIGHT_METER_CAM
     if cam_name not in bpy.data.objects:
         cam_data = bpy.data.cameras.new(name=cam_name)
         cam_data.display_size = 0.0625
@@ -442,6 +443,33 @@ class LIGHTMETER_OT_ensure_helper(bpy.types.Operator):
             self.report({'WARNING'}, 'Unable to create meter camera')
         return {'FINISHED'}
 
+class LIGHTMETER_OT_select_meter(bpy.types.Operator):
+    bl_idname = 'lightmeter.select_meter'
+    bl_label = 'Select Meter Camera'
+    bl_description = 'Select the hidden light meter camera in the 3D View'
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context.scene, 'light_meter', 0)
+
+    def execute(self, context):
+        cam_obj = ensureMeterCamera(context)
+        if not cam_obj:
+            self.report({'WARNING'}, 'Meter camera missing')
+            return {'CANCELLED'}
+
+        cam_obj.hide_set(False)
+        cam_obj.hide_viewport = False
+        cam_obj.hide_render = False
+
+        view_layer = context.view_layer
+        for obj in view_layer.objects:
+            obj.select_set(obj == cam_obj)
+        view_layer.objects.active = cam_obj
+        self.report({'INFO'}, 'Meter camera selected')
+        return {'FINISHED'}
+
 class LIGHTMETER_OT_measure(bpy.types.Operator):
     '''Measure incident light on meter'''
     bl_idname = 'lightmeter.measure'
@@ -522,7 +550,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
     def draw_header(self, context):
         markPanelState(type(self), 0)
         layout = self.layout
-        layout.label(text='', icon='SCENE')
+        layout.label(text='', icon='LIGHT_HEMI')
         # layout.operator('lightmeter.measure', text='Measure', icon='SCENE')
 
     def draw(self, context):
@@ -534,8 +562,9 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         set_box = layout.box()
         set_row = set_box.row(align=0)
         set_row.scale_y = 1.2
-        set_row.prop(meter, 'mode', text='',
-                     icon='LIGHT_SUN', icon_only=1)
+        lcol = set_row.column()
+        lcol.prop(meter, 'mode', text='', icon='LIGHT_SUN', icon_only=1)
+        lcol.operator('lightmeter.select_meter', text='', icon='LIGHT_HEMI')
 
         exps = meter.exposure_settings
         display_type = ''
@@ -656,7 +685,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         analog_row.scale_y = 2
         analog_row.label()
 
-        meter_cam = meter.lightmeter_cam or bpy.data.objects.get('.LightMeterCamera')
+        meter_cam = meter.lightmeter_cam or bpy.data.objects.get(LIGHT_METER_CAM)
         track = meter_cam.constraints.get(LIGHT_METER_TRACK_TO) if meter_cam else None
 
         cam_col = layout.box()
@@ -761,9 +790,9 @@ class LightMeterProperties(bpy.types.PropertyGroup):
     dome_fov: FloatProperty(
         name='Lumisphere FOV',
         description='Meter lumisphere dome angle of view (typically 180°-220°)',
-        default=180,
+        default=220,
         min=1,
-        max=220
+        max=360
     ) # type: ignore
 
     resolution: IntProperty(
@@ -955,6 +984,7 @@ classes = [
     LightMeterPanelState,
     LightMeterProperties,
     LIGHTMETER_OT_ensure_helper,
+    LIGHTMETER_OT_select_meter,
     LIGHTMETER_OT_measure,
     LIGHTMETER_OT_apply_to_camera,
     LIGHTMETER_OT_step_enum,
