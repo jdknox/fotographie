@@ -6,7 +6,7 @@ LEVEL_WARNING = 2
 LEVEL_ERROR = 3
 
 g_log_level = LEVEL_INFO
-g_log_level = LEVEL_DEBUG
+# g_log_level = LEVEL_DEBUG
 g_logging_enabled = 1
 
 def _log(level, label, message):

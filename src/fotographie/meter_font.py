@@ -30,6 +30,20 @@ font_info = {
     'handler': None,
 }
 
+def getRegionScale(region):
+    if region.height <= 1: return 0    # Hidden!
+
+    # First, calculate the view height in pixels (or width, doesn't matter)
+    transform = region.view2d.region_to_view
+    _, view_top_pixel = transform(0, region.height)
+    _, view_bottom_pixel = transform(0, 1)  # I think this is correct vs `0`
+    view_height = view_top_pixel - view_bottom_pixel
+    if view_height == 0: return 0
+
+    # Now, we can get the scale factor
+    region_scale = region.height/view_height
+    return region_scale
+
 def drawText(panel):
     context = bpy.context
     region = context.region
@@ -38,6 +52,7 @@ def drawText(panel):
 
     meter: LightMeterProperties = context.scene.light_meter
     uiscale = context.preferences.view.ui_scale
+    # uiscale = context.preferences.system.ui_scale
     _, y = getDisplayPos(region, 1)
     icon_top = y
 
@@ -73,7 +88,7 @@ def drawText(panel):
     x = (0.89*region.width - pad - w)/2
 
     v2d = region.view2d
-    vpad = 70/uiscale
+    vpad = 50/uiscale
     pad, _ = v2d.view_to_region(vpad, 0, clip=0)
     rscale = pow(pad/vpad, 0.5)
     y -= (h/2 + 1.5*BASE_ELEM*uiscale)*rscale
@@ -100,16 +115,29 @@ def drawText(panel):
         blf.color(FONT_ID, *TEXT_COLOR)
         blf.draw(FONT_ID, str(frac))
 
-    FONT_R = 0
+    # Vertical MEASURE    
+    # Margins and padding
+    ui_scale = context.preferences.system.ui_scale
+    rscale = getRegionScale(region)
+    left_padding = 8*ui_scale
+    sidebar_margin = 21*ui_scale*rscale
+    
+    # Dimensions
+    width = region.width - 2*left_padding*rscale - sidebar_margin
+    
+    # Convert to region pixels
+    x, _ = v2d.view_to_region(left_padding, 0, clip=0)
+    y = icon_top - 6*rscale
+
     measure_text = 'MEASURE'
+    FONT_R = 0
+    blf.size(FONT_R, 10*rscale*ui_scale)
     wp, hp = blf.dimensions(FONT_R, measure_text)
-    x, y = region.width - pad - 28/uiscale, icon_top - 6*rscale
     blf.enable(FONT_R, blf.ROTATION)
     blf.rotation(FONT_R, -pi/2)
 
-    blf.size(FONT_R, 16*rscale)
     blf.color(FONT_R, *TEXT_COLOR)
-    blf.position(FONT_R, x, y, 0)
+    blf.position(FONT_R, width - x/1.5 - hp, y, 0)
     blf.draw(FONT_R, measure_text)
 
     blf.disable(FONT_R, blf.ROTATION)
