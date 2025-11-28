@@ -2,5 +2,6 @@ images/
 __pycache__/
 dev/crash_reports
 dev/local
+*.zip
 *.blend
 *.blend1
