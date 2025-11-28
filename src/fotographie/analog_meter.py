@@ -30,6 +30,37 @@ def loadFont():
 FONT_ID = loadFont()
 BOX_THEME = bpy.context.preferences.themes['Default'].user_interface.wcol_box
 
+def getRegionScale(region):
+    if region.height <= 1: return 0    # Hidden!
+
+    # First, calculate the view height in pixels (or width, doesn't matter)
+    transform = region.view2d.region_to_view
+    _, view_top_pixel = transform(0, region.height)
+    _, view_bottom_pixel = transform(0, 1)  # I think this is correct vs `0`
+    view_height = view_top_pixel - view_bottom_pixel
+    if view_height == 0: return 0
+
+    # Now, we can get the scale factor
+    region_scale = region.height/view_height
+    return region_scale
+
+def getRegionInternalHorizontal(context):
+    region = context.region
+    v2d = region.view2d
+    ui_scale = context.preferences.system.ui_scale
+    rscale = getRegionScale(region)
+
+    # Margins and padding
+    left_padding = 8*ui_scale
+    sidebar_margin = 21*ui_scale*rscale
+
+    # Dimensions
+    width = region.width - 2*left_padding*rscale - sidebar_margin
+
+    # Convert to region pixels
+    x, _ = v2d.view_to_region(left_padding, 0, clip=0)
+    return x, width
+
 def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14):
     '''Draw an analog-style exposure meter'''
 
@@ -205,22 +236,18 @@ def drawAnalogMeter(panel):
     meter = context.scene.light_meter
     uiscale = context.preferences.view.ui_scale
 
-    gutter_A = 10
-    gutter = 40 + gutter_A
-    region_width = (region.width - gutter)/uiscale
-
-    pad = 13/uiscale
-    width = (region_width - 2*pad)*0.94
-    x = (region_width - width)/2 + gutter_A/uiscale
-
     height = 30
     _, y = getDisplayPos(region, 1)
-    vw, vy = region.view2d.region_to_view(region.width/uiscale, y/uiscale)
+    _, vy = region.view2d.region_to_view(0, y/uiscale)
     vy -= 1.5*DISPLAY_HEIGHT
-    rw, ry = region.view2d.view_to_region((vw - gutter/2)/uiscale, vy, clip=0)
-    rscale = region.width/vw/uiscale
+    _, ry = region.view2d.view_to_region(0, vy, clip=0)
 
-    x, y, width, height = [uiscale*V for V in [x, ry, rw, height]]
+    rscale = getRegionScale(region)
+    y, height = [uiscale*V for V in [ry, height]]
+    x, width = getRegionInternalHorizontal(context)
+    pad = x + 2*rscale*uiscale
+    x += pad
+    width -= 2*pad
     drawMeter(x, y, width, height*rscale, calcMeasuredFromEV(meter))
 
 @persistent

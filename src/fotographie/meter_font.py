@@ -9,7 +9,7 @@ from .light_meter import (
     LIGHTMETER_PT_main_panel as LIGHTMETER_PT,
     LightMeterProperties, aperturePresetFromExponent
 )
-from .analog_meter import loadFont, FONT_ID
+from .analog_meter import loadFont, FONT_ID, getRegionScale, getRegionInternalHorizontal
 from .gpu_utils import *
 from . import logger as log
 
@@ -29,20 +29,6 @@ font_info = {
 #    'font_id': 0,
     'handler': None,
 }
-
-def getRegionScale(region):
-    if region.height <= 1: return 0    # Hidden!
-
-    # First, calculate the view height in pixels (or width, doesn't matter)
-    transform = region.view2d.region_to_view
-    _, view_top_pixel = transform(0, region.height)
-    _, view_bottom_pixel = transform(0, 1)  # I think this is correct vs `0`
-    view_height = view_top_pixel - view_bottom_pixel
-    if view_height == 0: return 0
-
-    # Now, we can get the scale factor
-    region_scale = region.height/view_height
-    return region_scale
 
 def drawText(panel):
     context = bpy.context
@@ -115,23 +101,14 @@ def drawText(panel):
         blf.color(FONT_ID, *TEXT_COLOR)
         blf.draw(FONT_ID, str(frac))
 
-    # Vertical MEASURE    
-    # Margins and padding
+    # Vertical MEASURE
     ui_scale = context.preferences.system.ui_scale
-    rscale = getRegionScale(region)
-    left_padding = 8*ui_scale
-    sidebar_margin = 21*ui_scale*rscale
-    
-    # Dimensions
-    width = region.width - 2*left_padding*rscale - sidebar_margin
-    
-    # Convert to region pixels
-    x, _ = v2d.view_to_region(left_padding, 0, clip=0)
+    x, width = getRegionInternalHorizontal(context)
     y = icon_top - 6*rscale
-
+    
     measure_text = 'MEASURE'
     FONT_R = 0
-    blf.size(FONT_R, 10*rscale*ui_scale)
+    blf.size(FONT_R, 11*rscale*ui_scale)
     wp, hp = blf.dimensions(FONT_R, measure_text)
     blf.enable(FONT_R, blf.ROTATION)
     blf.rotation(FONT_R, -pi/2)

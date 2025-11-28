@@ -7,7 +7,7 @@ schema_version = '1.0.0'
 # Example of manifest file for a Blender extension
 # Change the values according to your extension
 id = 'fotographie'
-version = '25.1126.2305'
+version = '25.1127.1207'
 name = 'Fotographie'
 tagline = 'Physically based camera exposure settings and light meter'
 maintainer = 'knox'
@@ -29,13 +29,13 @@ blender_version_min = '4.2.0'
 # License conforming to https://spdx.org/licenses/ (use 'SPDX: prefix)
 # https://docs.blender.org/manual/en/dev/advanced/extensions/licenses.html
 license = [
-  'SPDX:GPL-2.0-or-later',
+  'SPDX:GPL-3.0-or-later',
 ]
 # Optional: required by some licenses.
-# copyright = [
-#   '2002-2024 Developer Name',
-#   '1998 Company Name',
-# ]
+copyright = [
+  '2025 Knox',
+  '2012 Nike 2002-04 font by Daniel Gellatley; https://www.dafont.com/nike-2002-04.font',
+]
 
 # Optional list of supported platforms. If omitted, the extension will be available in all operating systems.
 # platforms = ['windows-x64', 'macos-arm64', 'linux-x64']
@@ -62,9 +62,9 @@ license = [
 # Keep this a single short sentence without a period (.) at the end.
 # For longer explanations use the documentation or detail page.
 #
-# [permissions]
+[permissions]
 # network = 'Need to sync motion-capture data to server'
-# files = 'Import/export FBX from/to disk'
+files = 'Background measuring makes a temporary copy of blend file'
 # clipboard = 'Copy and paste bone transforms'
 
 # Optional: build settings.

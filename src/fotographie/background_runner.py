@@ -4,13 +4,6 @@ import os
 import sys
 import tempfile
 from math import *
-# try:
-#     from .light_meter import measureIlluminance
-# except ImportError:
-#     pkg_root = os.path.dirname(os.path.dirname(__file__))
-#     if pkg_root not in sys.path:
-#         sys.path.append(pkg_root)
-#     from fotographie.light_meter import measureIlluminance
 
 RESOLUTION = 512
 SAMPLE_COUNT = 16
@@ -43,7 +36,6 @@ def weightsIrradiance(h, w, phi_span=pi):
 def measureIlluminance(img, cam_data):
     h, w = img.size
     span = (cam_data.longitude_max - cam_data.longitude_min)
-    # span = pi
     weights = weightsIrradiance(h, w, span)
 
     buf = np.empty(w*h*4, dtype=np.float32)
@@ -132,7 +124,6 @@ def onRenderWrite(scene, depsgraph):
         img = bpy.data.images.load(img_path)
         data = buildMeasurement(scene, img)
         data['img_path'] = img_path
-        # os.remove(path_img)
         reportResult(data)
     else:
         print('   NOT FOUND!', flush=True)
@@ -140,6 +131,16 @@ def onRenderWrite(scene, depsgraph):
     bpy.ops.wm.quit_blender()
 
 def runMeasurement():
+    addon_id = next(
+        (name for name in bpy.context.preferences.addons.keys()
+        if name.endswith('.fotographie')),
+        None
+    )
+    if addon_id:
+        bpy.ops.preferences.addon_enable(module=addon_id)
+    else:
+        print('ADDON NOT FOUND: Fotographie')
+
     scene = bpy.context.scene
     ensureCyclesSettings(scene)
     resetCompositor(scene)
