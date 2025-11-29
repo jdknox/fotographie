@@ -1,6 +1,7 @@
 #
 import os
 from datetime import datetime
+import logger
 
 def iterPythonFiles(root):
     for dirpath, dirnames, filenames in os.walk(root):
@@ -8,7 +9,7 @@ def iterPythonFiles(root):
         for dirname in dirnames:
             if dirname.startswith('_'):
                 continue
-            if dirname in ('dev', '__pycache__', '.git', '.vscode'):
+            if dirname in ('dev', '.git', '.vscode'):
                 continue
             filtered.append(dirname)
         dirnames[:] = filtered
@@ -59,11 +60,19 @@ autogen_warning = '''# ============================================== #
 '''
 out.write(autogen_warning)
 
+logger_warning = '''
+'WARNING: in src/fotographie/logger.py, `g_log_level` set to LEVEL_DEBUG'=''
+'''.lstrip()
+if logger.g_log_level >= logger.LEVEL_INFO:
+    logger_warning = ''
+
 with open('dev/blender_manifest.toml', 'r') as f:
     lines = f.readlines()
     for line in lines:
         if line.startswith('version ='):
             line = f"version = '{timestomp}'\n"
+        if logger_warning and line.startswith('[permissions]'):
+            line += logger_warning
         out.write(line)
 
 out.close()
@@ -73,45 +82,3 @@ out.close()
 
 # atomically overwrite the old manifest
 os.replace(tmp_path, dst_path)
-
-## ------ ##
-# import shutil
-
-# OUT_ROOT = 'build'
-# PACKAGE = 'fotographie'
-# OUT_DIR = f'{OUT_ROOT}/{PACKAGE}'
-
-# def ensure_dir(path):
-#     if path and not os.path.isdir(path):
-#         os.makedirs(path, exist_ok=True)
-
-# def copy_file(src, dst):
-#     folder = os.path.dirname(dst)
-#     ensure_dir(folder)
-#     shutil.copy2(src, dst)
-
-# def copy_tree(src, dst):
-#     if os.path.isdir(dst):
-#         shutil.rmtree(dst)
-#     shutil.copytree(src, dst, dirs_exist_ok=True)
-
-# if os.path.isdir(OUT_DIR):
-#     shutil.rmtree(OUT_DIR)
-# ensure_dir(OUT_DIR)
-
-# INCLUDE = [
-#     '__init__.py',
-#     'auto_load.py',
-#     'light_meter.py',
-#     'main.py',
-#     'meter_font.py',
-#     'blender_manifest.toml',
-# ]
-
-# for entry in INCLUDE:
-#     src = entry
-#     dst = f'{OUT_DIR}/{entry}'
-#     if os.path.isdir(src):
-#         copy_tree(src, dst)
-#     elif os.path.isfile(src):
-#         copy_file(src, dst)

@@ -149,11 +149,13 @@ def calcMeasuredFromEV(meter):
     S_meas = max(3, min(409600*4, S_meas))
     ev_value=log2(S_meas/100)
     ev_full = floor(ev_value*step_size)/step_size
-    snapped = int(pow(2, ev_full))
-    if ev_full % 1 > 0.01:
-        snapped = snapRenard(pow(2, ev_full))
+    snapped = int(pow(2, ev_full))*100
+    log.debug(f'{ev_value=}; {ev_full=}; {snapped=}')
+    if (ev_full*100) % 1 > 0.01:
+        snapped = snapRenard(pow(2, ev_full)*100)
+    log.debug(f'   NEW: {snapped=}')
     return Metered(type=MeteredType.ISO, ev_value=ev_value,
-                       snapped=snapped*100, tenths=round(10*(ev_value - ev_full)),
+                       snapped=snapped, tenths=round(10*(ev_value - ev_full)),
                        prefix='ISO', suffix='')
 
 def ensureMeterCamera(context):

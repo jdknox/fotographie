@@ -4,10 +4,8 @@
 
 schema_version = '1.0.0'
 
-# Example of manifest file for a Blender extension
-# Change the values according to your extension
 id = 'fotographie'
-version = '25.1128.1424'
+version = '25.1128.2249'
 name = 'Fotographie'
 tagline = 'Physically based camera exposure settings and light meter'
 maintainer = 'knox'
@@ -19,7 +17,7 @@ type = 'add-on'
 
 # Optional list defined by Blender and server, see:
 # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
-tags = ['3D View', 'Camera',  'Lighting', 'Rendering', 'User Interface']
+tags = ['3D View', 'Camera',  'Lighting', 'Render', 'User Interface']
 
 blender_version_min = '4.2.0'
 # # Optional: Blender version that the extension does not support, earlier versions are supported.
@@ -61,7 +59,7 @@ copyright = [
 # For each permission it is important to also specify the reason why it is required.
 # Keep this a single short sentence without a period (.) at the end.
 # For longer explanations use the documentation or detail page.
-#
+
 [permissions]
 # network = 'Need to sync motion-capture data to server'
 files = 'Background measuring makes a temporary copy of blend file'
