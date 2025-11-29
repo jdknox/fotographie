@@ -15,7 +15,7 @@ from . import background_job
 from . import logger as log
 
 DEBUG = 0
-BL_CATEGORY = 'SuperMeter'
+BL_CATEGORY = 'Fotographie'
 LIGHT_METER_TRACK_TO = 'Track To'
 LIGHT_METER_CAM = '.LightMeterCamera'
 
