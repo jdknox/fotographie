@@ -9,7 +9,7 @@ maintainer = 'knox'
 type = 'add-on'
 
 # Optional link to documentation, support, source files, etc
-# website = 'https://extensions.blender.org/add-ons/my-example-package/'
+website = 'https://github.com/jdknox/fotographie'
 
 # Optional list defined by Blender and server, see:
 # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
