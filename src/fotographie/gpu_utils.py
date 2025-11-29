@@ -38,15 +38,15 @@ def getDisplayPos(region, is_handler=0):
         w = region.width
         h = region.height
 
-    # print(f'{fb.viewport_get()=}; <{x=}, {y=}> <{w=}, {h=}>')
     b_type = 'UBYTE'
     ch = 4
     data = gpu.types.Buffer(b_type, w*h*ch)    
     fb.read_color(x, y, w, h, ch, 0, b_type, data=data)
+
     start = time.perf_counter()
     pos = findBlueRun(data, w, h)
 
-    # if 0:
+    # if DEBUG:
     #     rgb = np.asarray(data, dtype=np.float32)/255
     #     if ch == 3:
     #         rgb = rgb.reshape(-1, 3)
@@ -61,5 +61,5 @@ def getDisplayPos(region, is_handler=0):
     #         img = I.new(name=name, width=w, height=h)
     #     img.pixels.foreach_set(rgba)
     elapsed = time.perf_counter() - start
-    # print(f'{pos=} (took {elapsed*1000:0.1f} ms)')
+    # log.debug(f'{pos=} (took {elapsed*1000:0.1f} ms)')
     return pos

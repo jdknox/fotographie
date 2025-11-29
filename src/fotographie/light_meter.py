@@ -10,9 +10,6 @@ import os
 from dataclasses import dataclass as struct
 from math import *
 
-# from .main import generateApertures, generateShutterSpeeds, generateISOSpeeds, \
-#     apertureFromExponent, \
-#     CameraExposureSettings
 from .camera import *
 from . import background_job
 from . import logger as log
@@ -62,10 +59,6 @@ def getEnumIdentifiers(container, prop_name):
             index = i
 
     return index, items
-    # prop = container.bl_rna.properties.get(prop_name)
-    # if not prop:
-    #     return []
-    # return [item.identifier for item in prop.enum_items]
 
 # ===== Sekonic-style exposure helpers =====
 def getShutterMilliseconds(meter):
@@ -89,10 +82,6 @@ def formatShutter(t):
 
 def stepTenths(ev):
     return ev - floor(ev)
-    # step = 2*log2(v)
-    # full = int(step)
-    # frac = round(10*(step - full))
-    # return int(2**(full/2)), frac
 
 def calcMeasuredFromEV(meter):
     # EV at current ISO, using: EV_S = log2(N^2/t) - log2(S/100)
@@ -157,12 +146,15 @@ def calcMeasuredFromEV(meter):
     t = getShutterSeconds(meter)
     N = apertureFromMeter(meter)
     S_meas = 100.0*(N*N/t)/ES100_C
-    S_meas = max(3, min(409600, S_meas))
-    snapped = snapRenard(S_meas)
-    return Metered(type=MeteredType.ISO, ev_value=log2(S_meas/100),
-                       snapped=snapped, tenths=0,
+    S_meas = max(3, min(409600*4, S_meas))
+    ev_value=log2(S_meas/100)
+    ev_full = floor(ev_value*step_size)/step_size
+    snapped = int(pow(2, ev_full))
+    if ev_full % 1 > 0.01:
+        snapped = snapRenard(pow(2, ev_full))
+    return Metered(type=MeteredType.ISO, ev_value=ev_value,
+                       snapped=snapped*100, tenths=round(10*(ev_value - ev_full)),
                        prefix='ISO', suffix='')
-    return ('ISO', f'{int(round(S_meas))}')
 
 def ensureMeterCamera(context):
     scene = context.scene
@@ -296,10 +288,7 @@ class LIGHTMETER_OT_step_enum(bpy.types.Operator):
         exps:CameraExposureSettings = meter.exposure_settings
 
         idx, identifiers = getEnumIdentifiers(exps, self.prop_name)
-        # identifiers = generateApertures(exps)
         idx_cur = exps.get(self.prop_name)
-        # if not identifiers:
-        #     return {'CANCELLED'}
 
         if self.direction > 0 and idx_cur < len(identifiers) - 1:
             idx_cur += 1
@@ -349,7 +338,6 @@ class LIGHTMETER_OT_apply_to_camera(bpy.types.Operator):
         measured = calcMeasuredFromEV(meter)
         if measured.ev_value <= LOWEST_EV:
             self.report({'WARNING'}, 'Meter EV value too low for camera')
-            # return {'CANCELLED'}
 
         steps = int(meter.exposure_settings.step_size)
         M = MAX_STEPS//steps
@@ -434,7 +422,6 @@ class LIGHTMETER_OT_focus_scene_camera(bpy.types.Operator):
                 log.warning(f'Properties space lacks DATA context (type={space.type}, options={items})')
                 self.report({'WARNING'}, 'Could not switch to Camera Data tab. It might be hidden.')
 
-        # print(space.type, items)
         return {'FINISHED'}
 
 class LIGHTMETER_OT_ensure_helper(bpy.types.Operator):
@@ -558,7 +545,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         markPanelState(type(self), 0)
         layout = self.layout
         layout.label(text='', icon='LIGHT_HEMI')
-        # layout.operator('lightmeter.measure', text='Measure', icon='SCENE')
 
     def draw(self, context):
         layout = self.layout
@@ -584,7 +570,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             op.group_attr = 'exposure_settings'
             op.prop_name = 'shutter_preset'
             op.direction = -1
-            # c1.prop(exps, 'shutter_preset', text='')
+
             c1.prop_with_popover(exps, 'shutter_preset', text='',
                                  panel=LIGHTMETER_PT_shutter_menu.bl_idname)
             op = c1.operator('lightmeter.step_enum', text='', icon='TRIA_DOWN', emboss=0)
@@ -601,9 +587,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             if DEBUG: c1.box().label(text=f'{str_ms}')
         else:
             display_type = 'T'
-            # set_row.box().label(text=f'{ms} ms')
-            # if ms < 1000:
-            #     aux = f'1/'
 
         if meter.mode != 'T':
             c1 = set_row.column(align=True)
@@ -665,7 +648,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         r0 = small.row()
         r0.label(text=display_type, icon='NODE_SOCKET_STRING')
         if meter.background_pending:
-            col = inside#.column()
+            col = inside
             col.label(text='Background measurement running...', icon='TIME')
             col.progress(
                 text='Metering...',
@@ -696,7 +679,7 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         button.operator('lightmeter.measure',
                          text=' ', icon='THREE_DOTS', depress=measuring)
 
-        # === Analog scale (-3 to +3 EV) ===
+        # === Analog scale ===
         analog_row = layout.box()
         analog_row.scale_y = 2
         analog_row.label()
@@ -742,10 +725,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
             target_row.label(text=f'Target: {cam_name}', icon='PIVOT_CURSOR')
 
         # Settings
-        # settings_box = layout.box()
-        state_names = {value: name for name, value in \
-                            PANEL_STATE.__dict__.items()
-                            if not name.startswith('_')}
         header, settings_box = layout.panel_prop(meter, 'show_settings')
         header.label(text='Advanced', icon='PREFERENCES')
 
@@ -774,7 +753,6 @@ class LIGHTMETER_PT_main_panel(bpy.types.Panel):
         settings_col.prop(meter, 'dome_fov')
         settings_col.prop(meter, 'resolution')
         settings_col.prop(meter, 'sample_count')
-        # settings_col.prop(meter, 'show_rgb')
 
 
 # ============= PROPERTIES =============
@@ -894,13 +872,6 @@ class LightMeterPanelState(bpy.types.PropertyGroup):
     panel_category: StringProperty(default='') #type:ignore
     is_open: BoolProperty(default=False) #type:ignore
     measuring: BoolProperty(default=False) #type:ignore
-
-def _defer(idname, meter, prop, val):
-    bpy.app.timers.register(lambda: setattr(meter, prop, val))
-    # if meter.panel_owner == idname:
-    #     bpy.app.timers.register(lambda: setattr(meter, prop, val))
-    # else:
-    #     bpy.app.timers.register(lambda: setattr(meter, 'panel_owner', idname))
 
 class LIGHTMETER_PT_shutter_menu(bpy.types.Panel):
     bl_label = 'Select'

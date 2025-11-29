@@ -26,7 +26,6 @@ ICON_LOC = 92
 BORDER = 64
 
 font_info = {
-#    'font_id': 0,
     'handler': None,
 }
 
@@ -38,7 +37,7 @@ def drawText(panel):
 
     meter: LightMeterProperties = context.scene.light_meter
     uiscale = context.preferences.view.ui_scale
-    # uiscale = context.preferences.system.ui_scale
+    # uiscale = context.preferences.system.ui_scale     # NOTE(jdk): may switch to this
     _, y = getDisplayPos(region, 1)
     icon_top = y
 
@@ -69,7 +68,6 @@ def drawText(panel):
         count += 1
         if count > 100:
             break
-    # display_height = BASE_ELEM*panel_state.display_scale*uiscale
 
     x = (0.89*region.width - pad - w)/2
 
@@ -91,8 +89,7 @@ def drawText(panel):
     blf.size(FONT_ID, size*rscale)
     blf.position(FONT_ID, x, y, 0)
     blf.color(FONT_ID, *TEXT_COLOR)
-    res = blf.draw(FONT_ID, text)
-    # print(res)
+    blf.draw(FONT_ID, text)
 
     # tenths steps
     if meter.tenth_steps:
@@ -128,7 +125,7 @@ def register():
 def unregister():
     handler = font_info.get('handler', 0)
     if handler:
-        # log.debug(f'Removing handler {handler}')
+        log.debug(f'Removing handler {handler}')
         bpy.types.SpaceView3D.draw_handler_remove(handler, REGION_TYPE)
         font_info['handler'] = None
     else:

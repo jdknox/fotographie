@@ -124,7 +124,6 @@ def snapRenard(denom, use_exceptions=1):
         factor = EXCEPTIONS[index]
 
     val = factor*(10**k)
-    # print(factor, val)
     return int(val) if k >= 1 else val
 
 def generateShutterSpeeds(self=0, context=0):
@@ -296,13 +295,10 @@ def updateExposure(self, context):
     f_stop = apertureFromExponent(cam_exps.aperture_preset)
     dprint(f'{f_stop=};')
 
-    # shutter_val = exposure_props.shutter_preset
-    # shutter_in_s = float(shutter_val)*1e-3
     shutter_in_s = shutterFromExponent(cam_exps.shutter_preset)
     dprint(f'{shutter_in_s=}')
 
     if cam_exps.iso_preset == '':
-        # exps.iso_preset = exps.bl_rna.properties['iso_preset'].default
         return
     iso = isoSpeedFromExponent(cam_exps.iso_preset)
     dprint(f'{iso=}')
@@ -322,7 +318,6 @@ def updateExposure(self, context):
     exposure_settings *= iso/100
     exposure_settings *= ev_factor
     film_exposure = K_blender*exposure_settings
-    # film_exposure = exposure_settings
 
     # Update camera and render settings
     camera_data.dof.aperture_fstop = f_stop
@@ -423,7 +418,6 @@ def reorderForColumnFlow(items, cols=3):
             if idx < total:
                 reordered.append(filtered[idx])
             else:
-                # print(idx)
                 reordered.append(('', '-', 'INVALID'))
     return reordered
 
@@ -629,13 +623,9 @@ class CAMERA_PT_exposure_settings(Panel):
                     box.prop(context.scene.cycles, 'film_exposure', text='Film Exposure')
 
 def register():
-    # bpy.utils.register_class(CameraExposureSettings)
-    # bpy.utils.register_class(CAMERA_PT_exposure_settings)
     bpy.types.Camera.exposure_settings = bpy.props.PointerProperty(type=CameraExposureSettings)
 
 def unregister():
-    # bpy.utils.unregister_class(CAMERA_PT_exposure_settings)
-    # bpy.utils.unregister_class(CameraExposureSettings)
     del bpy.types.Camera.exposure_settings
 
 if __name__ == '__main__':

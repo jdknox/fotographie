@@ -2,6 +2,8 @@ images/
 __pycache__/
 dev/crash_reports
 dev/local
+.vscode
 *.zip
 *.blend
 *.blend1
+_*.py

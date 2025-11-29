@@ -67,8 +67,6 @@ def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14
     current_value = m.ev_value
     mode = m.type
     if mode == MeteredType.T:
-    #     min_value = 14
-    #     max_value = -3
         current_value *= -1
 
     # Calculate normalized position for needle (0.0 to 1.0)
@@ -81,7 +79,6 @@ def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14
     normalized_pos = max(0.0, min(1.0, normalized_pos))
     
     # Define f-stop values to display
-    # f_stops = [sqrt(2**(f)) for f in range(-1, 15)][:-1]
     f_stops = range(-2, 14)
     
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -98,7 +95,6 @@ def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14
     batch_bg = batch_for_shader(shader, 'TRIS', {'pos': vertices_bg}, indices=indices_bg)
     shader.bind()
     bg_color = Vector(BOX_THEME.inner).xyz/1.25
-    # bg_color = Vector([0.08627, 0.09411, 0.1255])*1.666
     bg_color.resize_4d()
     shader.uniform_float('color', bg_color)
     batch_bg.draw(shader)
@@ -163,6 +159,7 @@ def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14
     batch_ticks.draw(shader)
     
     # Draw needle/indicator
+    pad = 0
     needle_x = x_pos + normalized_pos*width + pad
     needle_width = 4
     n_height = height*0.8
@@ -179,18 +176,18 @@ def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14
     gpu.state.blend_set('ALPHA')
     shader.uniform_float('color', (1.0, 0.4, 0.2, 0.75))
     batch_needle.draw(shader)
-    
+
     # Draw f-stop labels
     font_id = FONT_ID if FONT_ID >= 0 else 0
     blf.color(font_id, 0.8, 0.8, 0.8, 1.0)
-    
-    # print(current_value)
+
     for ev_label in f_stops:
         log_stop = log2_(ev_label)
         label_pos = (log_stop - log_min)/(log_max - log_min)
         label_x = x_pos + label_pos*width
         
         # Format label
+        unit = ''
         match mode:
             case MeteredType.F:
                 label = max(0.0, pow(2, ev_label/2))
@@ -207,24 +204,37 @@ def drawMeter(x_pos, y_pos, width, height, m:Metered, min_value=-3, max_value=14
             case MeteredType.T:
                 sign = -1 if ev_label < 0 else 1
                 label = pow(2, sign*ev_label)
-                suffix = unit = ''
                 if sign < 0:
                     unit = 's'
                 shutter = int(snapRenard(label))
-                if shutter > 999:
-                    suffix = 'k'
-                    shutter = int(shutter/1000)
-                label_text = f'{shutter}{suffix}{unit}'
-            # case MeteredType.ISO:
-            #     label = int(pow(2, ev_label))*100
-            #     label_text = f'{label}'
+                shutter = reduceWithSIPrefix(shutter)
+                label_text = f'{shutter}{unit}'
+            case MeteredType.ISO:
+                label = pow(2, ev_label)*100
+                iso = int(snapRenard(label))
+                label_text = reduceWithSIPrefix(iso, 1)
             case _:
                 label_text = '--'
         
         blf.size(font_id, 14)
-        text_width, text_height = blf.dimensions(font_id, label_text)
+        text_width, _ = blf.dimensions(font_id, label_text)
+        pad = 0
         blf.position(font_id, label_x - text_width/2 + pad, y_pos + 5, 0)
         blf.draw(font_id, label_text)
+
+def reduceWithSIPrefix(n, precision=0):
+    prefix = ''
+    if n > 999999:
+        prefix = 'M'
+        n /= 1e6
+    elif n > 999:
+        prefix = 'k'
+        n /= 1e3
+        if (n % 1) < 2**-23:
+            precision = 0
+    else:
+        precision = 0
+    return(f'{n:0.{precision}f}{prefix}')
 
 DISPLAY_HEIGHT = 102
 def drawAnalogMeter(panel):
