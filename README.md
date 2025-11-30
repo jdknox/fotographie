@@ -2,6 +2,8 @@
 
 *Fotographie* is a Blender extension that brings a modern incident light meter for the 3D Viewport. It behaves like a handheld meter: you capture the scene's illumination, review the Sekonic‑style readouts, then push the values straight into your active camera.
 
+Blender Extension: https://extensions.blender.org/add-ons/fotographie/
+
 ## Highlights
 - **Viewport panel** – The *Fotographie* sidebar panel exposes T/F/TF modes, ISO presets, exposure compensation, camera targeting, and the background render controls.
 - **Visual overlays** – Both an analog needle and a digital seven‑segment display stay onscreen while you work, making it easy to keep track of the measured exposure.
