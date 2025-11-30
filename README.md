@@ -7,6 +7,7 @@
 - **Visual overlays** – Both an analog needle and a digital seven‑segment display stay onscreen while you work, making it easy to keep track of the measured exposure.
 - **Background measurement** – Press *Measure* to spin up an isolated Cycles render of a panoramic meter camera that acts as the light meter. *Fotographie* computes the lux/EV and keeps a reference EXR you can inspect later.
 - **Camera sync** – After a reading you can apply the measured value directly to the active scene camera (shutter, aperture, or ISO depending on the mode).
+- **Beta overlay** – The `blf` font renderer and GPU drawing code are still experimental. If you notice issues or crashes with the overlay, please report it.
 
 ## Quick Start
 1. In the 3D Viewport ensure the Sidebar is open (`N`), switch to the **SuperMeter** tab, and choose your metering mode (T/F/TF).
